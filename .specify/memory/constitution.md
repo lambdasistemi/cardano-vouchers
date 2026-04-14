@@ -1,50 +1,49 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+# Cardano Vouchers Constitution
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. Privacy by Default
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+User balances and voucher caps are never revealed on-chain. All on-chain data is either commitments (Poseidon hashes) or zero-knowledge proofs. Only the spend amount per transaction is public. Privacy is the reason this project exists — without it, a simple token ledger suffices.
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+### II. Proof Soundness
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+The system security relies entirely on the soundness of Groth16 proofs. No spend can occur without a valid proof that the committed counter has not exceeded the hidden cap. The circuit is the source of truth for what constitutes a valid state transition. The on-chain validator must reject anything the circuit would not prove.
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+### III. Off-Chain Certificates, On-Chain State
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+Voucher certificates (containing the cap) live off-chain, issued by the supermarket. On-chain state tracks only committed spend counters. This separation means the supermarket can issue new certificates without any on-chain transaction, and users accumulate multiple independent vouchers freely.
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+### IV. Minimal On-Chain Footprint
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+Each spend transaction carries only: the spend amount, the new commitment, and the Groth16 proof. The validator checks the proof, verifies signature, and ensures datum continuity. No auxiliary data, no oracle feeds, no complex multi-step protocols.
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+### V. Correct Before Optimized
+
+Start with one UTXO per user. Merkle Patricia Trie optimization comes later. Start with snarkjs for proof generation. Native Rust prover comes later. Start with cardano-cli for transactions. Programmatic submission comes later. Every step must be end-to-end testable before the next optimization layer.
+
+### VI. Nix-First
+
+All dependencies, builds, and CI are Nix-managed. The flake produces all derivations. The dev shell provides all tools. No global installs, no version drift between developers or CI.
+
+## Technology Stack
+
+- **On-chain**: Aiken (Plutus V3), BLS12-381 builtins for Groth16 pairing verification
+- **Circuits**: Circom 2 targeting BLS12-381, Poseidon commitments, Groth16 proof system
+- **Off-chain**: Haskell (GHC 9.10+), cardano-node-clients for transaction construction and submission
+- **Point compression**: Rust FFI via blst crate
+- **Proof generation**: snarkjs (via Node.js subprocess, to be replaced by native prover)
+
+## Development Workflow
+
+- Linear git history, conventional commits
+- Every PR passes CI (build, test, format, lint)
+- Specs precede implementation — the SDD workflow gates all feature work
+- Small bisect-safe commits: every commit compiles
+- Test at system boundaries: on-chain/off-chain interface, proof generation/verification round-trip
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+This constitution supersedes all other practices. Amendments require documentation and rationale. Privacy guarantees (Principle I) and proof soundness (Principle II) cannot be weakened.
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+**Version**: 1.0.0 | **Ratified**: 2026-04-14
