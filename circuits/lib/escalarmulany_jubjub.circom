@@ -159,8 +159,9 @@ template EscalarMulAny(n) {
 
         if (s==0) {
             // force G8 point if input point is zero
-            segments[s].p[0] <== p[0] + (5299619240641551281634865583518297030282874472190772894086521144482721001553 - p[0])*zeropoint.out;
-            segments[s].p[1] <== p[1] + (16950150798460657717958625567821834550301663161624707787222815936182638968203 - p[1])*zeropoint.out;
+            // Jubjub BASE8 (subgroup generator) as fallback for zero input
+            segments[s].p[0] <== p[0] + (52363696936650001301287582521711853146588465673974699354184720335305084401224 - p[0])*zeropoint.out;
+            segments[s].p[1] <== p[1] + (12024993157431732930272824407495979791132374572895036891122288541794509830761 - p[1])*zeropoint.out;
         } else {
             doublers[s-1] = MontgomeryDouble();
             m2e[s-1] = Montgomery2Edwards();
