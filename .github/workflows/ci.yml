@@ -16,5 +16,56 @@ jobs:
     runs-on: nixos
     steps:
       - uses: actions/checkout@v4
-      - name: Stub CI
-        run: echo "CI stub — will be replaced by real CI"
+      - uses: cachix/cachix-action@v15
+        with:
+          name: paolino
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Build all
+        run: nix develop --quiet -c just build
+
+  test:
+    name: Test
+    needs: build-gate
+    runs-on: nixos
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/cachix-action@v15
+        with:
+          name: paolino
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Compile circuit
+        run: nix develop --quiet -c just circuit
+      - name: Run trusted setup
+        run: nix develop --quiet -c just setup
+      - name: Generate test proof
+        run: nix develop --quiet -c just prove
+      - name: Run off-chain tests
+        run: nix develop --quiet -c just test-offchain
+      - name: Run on-chain tests
+        run: nix develop --quiet -c just test-onchain
+
+  formatting:
+    name: Format Check
+    needs: build-gate
+    runs-on: nixos
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/cachix-action@v15
+        with:
+          name: paolino
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Check formatting
+        run: nix develop --quiet -c just format-check
+
+  hlint:
+    name: HLint
+    needs: build-gate
+    runs-on: nixos
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/cachix-action@v15
+        with:
+          name: paolino
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Run HLint
+        run: nix develop --quiet -c just hlint
