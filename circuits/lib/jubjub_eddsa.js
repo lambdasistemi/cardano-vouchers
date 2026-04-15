@@ -9,7 +9,10 @@ const q = 5243587517512619047944774050818596583769055250052763782260365869993858
 const JUBJUB_A = q - 1n; // -1 mod q
 const JUBJUB_D = 19257038036680949359750312669786877991949435402254120286184196891950884077233n;
 const JUBJUB_ORDER = 6554484396890773809930967563523245729705921265872317281365359162392183254199n;
-// Base8 point
+// Full group generator (order = 8 * JUBJUB_ORDER, for cofactor-clearing EdDSA)
+const GEN_X = 8076246640662884909881801758704306714034609987455869804520522091855516602923n;
+const GEN_Y = 13262374693698910701929044844600465831413122818447359594527400194675274060458n;
+// Base8 = 8 * Gen (subgroup generator, order = JUBJUB_ORDER)
 const BASE8_X = 52363696936650001301287582521711853146588465673974699354184720335305084401224n;
 const BASE8_Y = 12024993157431732930272824407495979791132374572895036891122288541794509830761n;
 
@@ -95,7 +98,7 @@ function keygen() {
   let sk = 0n;
   for (let i = 0; i < 32; i++) sk = (sk << 8n) + BigInt(skBytes[i]);
   sk = sk % JUBJUB_ORDER;
-  const [pkx, pky] = edwardsMul(BASE8_X, BASE8_Y, sk);
+  const [pkx, pky] = edwardsMul(GEN_X, GEN_Y, sk);
   return { sk, pkx, pky };
 }
 
@@ -114,4 +117,4 @@ async function sign(sk, pkx, pky, msg) {
   return { R8x, R8y, S };
 }
 
-module.exports = { keygen, sign, initPoseidon, edwardsMul, BASE8_X, BASE8_Y, JUBJUB_ORDER, q };
+module.exports = { keygen, sign, initPoseidon, edwardsMul, GEN_X, GEN_Y, BASE8_X, BASE8_Y, JUBJUB_ORDER, q };
