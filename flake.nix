@@ -8,17 +8,30 @@
   };
 
   inputs = {
-    haskellNix.url = "github:input-output-hk/haskell.nix";
+    haskellNix.url = "github:input-output-hk/haskell.nix/baa6a549ce876e9c44c494a12116f178f1becbe6";
     nixpkgs.follows = "haskellNix/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     aiken.url = "github:aiken-lang/aiken";
+    iohkNix = {
+      url = "github:input-output-hk/iohk-nix/0ce7cc21b9a4cfde41871ef486d01a8fafbf9627";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    CHaP = {
+      url = "github:intersectmbo/cardano-haskell-packages/a46182e9c039737bf43cdb5286df49bbe0edf6fb";
+      flake = false;
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, haskellNix, aiken }:
+  outputs = { self, nixpkgs, flake-utils, haskellNix, aiken, iohkNix, CHaP }:
     flake-utils.lib.eachSystem [ "x86_64-linux" ] (system:
       let
         pkgs = import nixpkgs {
-          overlays = [ haskellNix.overlay ];
+          overlays = [
+            iohkNix.overlays.crypto
+            haskellNix.overlay
+            iohkNix.overlays.haskell-nix-crypto
+            iohkNix.overlays.cardano-lib
+          ];
           inherit system;
         };
         aikenPkg = aiken.packages.${system}.aiken or null;
@@ -32,7 +45,7 @@
         };
 
         # Haskell project via haskell.nix
-        project = import ./nix/project.nix { inherit pkgs groth16-ffi; };
+        project = import ./nix/project.nix { inherit pkgs groth16-ffi CHaP; };
         components = project.hsPkgs.cardano-vouchers.components;
 
         # Circuit compilation (Circom → R1CS + WASM)

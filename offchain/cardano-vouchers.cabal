@@ -16,14 +16,22 @@ library
     Cardano.Groth16.Compress
     Cardano.Groth16.Serialize
     Cardano.Groth16.Prove
+    Cardano.Vouchers.Types
+    Cardano.Vouchers.Transaction
   build-depends:
-    , base       >= 4.14 && < 5
-    , bytestring >= 0.11
-    , cborg      >= 0.2
-    , aeson      >= 2.0
-    , text       >= 1.2
-    , vector     >= 0.12
-    , process    >= 1.6
+    , base                  >= 4.14 && < 5
+    , bytestring            >= 0.11
+    , cborg                 >= 0.2
+    , aeson                 >= 2.0
+    , text                  >= 1.2
+    , vector                >= 0.12
+    , process               >= 1.6
+    , plutus-tx
+    , plutus-core
+    , cardano-ledger-api
+    , cardano-ledger-core
+    , cardano-ledger-mary
+    , cardano-node-clients
   extra-libraries:
     groth16_ffi
 

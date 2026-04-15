@@ -1,8 +1,11 @@
-{ pkgs, groth16-ffi }:
+{ pkgs, groth16-ffi, CHaP }:
 let
   project = pkgs.haskell-nix.cabalProject' {
     src = ../offchain;
-    compiler-nix-name = "ghc910";
+    compiler-nix-name = "ghc984";
+    inputMap = {
+      "https://chap.intersectmbo.org/" = CHaP;
+    };
     modules = [
       {
         packages.cardano-vouchers.components.library = {
