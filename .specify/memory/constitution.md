@@ -12,68 +12,91 @@ New members get instant foot traffic on day one — existing coalition users wal
 
 The protocol eliminates per-business loyalty silos. Any coalition member issues vouchers. Any coalition member accepts them. Users earn at one place, spend at another. The coalition is the product — not the individual issuer. Joining the coalition means adding a verification key to the on-chain list. That is the only integration step.
 
-### II. User Device as State Store
+### II. User Has No Wallet
 
-The user's phone holds all private state: certificates, caps, randomness, proving keys. No server-side user databases. No accounts. The blockchain is the audit trail, the phone is the wallet. Issuers need only a signing key.
+The user has no Cardano wallet, no ADA, no signing keys. The user's phone holds certificates, private state (randomness, proving keys), and communicates with reificators. The user never interacts with the blockchain directly.
 
-### III. Zero Infrastructure for Coalition Members
+### III. Smart Contract as Trust Layer
 
-Coalition members need a signing key and a way to read the chain. No databases, no servers, no POS integrations beyond basic QR/NFC reading. The protocol must not require coalition members to run infrastructure.
+Coalition members do not verify each other's certificates. The on-chain validator does. A fake certificate produces an invalid Groth16 proof. The transaction fails. Nobody loses anything. The smart contract is the only trust relationship — no APIs, no shared databases, no inter-member communication needed.
 
-### IV. Smart Contract as Trust Layer
-
-Coalition members do not verify each other's certificates. The on-chain validator does. A fake certificate produces an invalid Groth16 proof. The transaction fails. Nobody loses anything. No APIs, no shared databases, no inter-member communication needed.
-
-### V. Privacy by Default
+### IV. Privacy by Default
 
 User balances and voucher caps are never revealed on-chain. All on-chain data is commitments (Poseidon hashes) or zero-knowledge proofs. Only the spend amount per transaction is public. The issuer who tops up a user's cap knows that cap (they signed it), but on-chain observers learn nothing about balances.
 
-### VI. Proof Soundness
+### V. Proof Soundness
 
-No spend occurs without a valid Groth16 proof that the committed counter has not exceeded the hidden cap. A single Groth16 circuit handles everything: issuer signature verification, counter arithmetic, range check, and commitment binding. No second proof system is needed — the signature check is embedded in the circuit.
+No spend occurs without a valid Groth16 proof that the committed counter has not exceeded the hidden cap. The proof binds the spend amount `d` — the customer authorizes the exact amount by generating the proof. No party can alter `d` without invalidating the proof. A single Groth16 circuit handles everything: issuer signature verification, counter arithmetic, range check, and commitment binding.
 
-### VII. Monotonic State
+### VI. Monotonic State
 
 Cap only grows (rewards). Spent only grows (redemptions). The invariant is always: spent <= cap. The gap is the user's available balance, known only to the user's phone. A new certificate always supersedes the old one with a higher cap. There is no revocation.
 
-### VIII. On-Chain Spending
+### VII. Reification Model
 
-All voucher spends settle on L1. The spend transaction updates the user's committed counter on-chain. This is the only transaction type in the system. Certificate issuance and cap updates happen off-chain (signed by the issuer, stored on the user's phone). The on-chain state is the single source of truth for spend history.
+Spending and redemption are decoupled in time and space.
 
-### IX. Earn and Spend in One Visit
+#### Terminology
 
-At the supermarket, the user can both spend existing vouchers and earn new ones. Spending is on-chain (Groth16 proof). Earning is off-chain (supermarket signs a new certificate with a higher cap). The user walks away with an updated on-chain committed counter and a new certificate.
+- **Reificator**: A device at a cashing point (shop). Has a signing key, settles proofs on-chain, signs certificates. Stores unredeemed nonces. Screen is dormant between interactions but settlement runs continuously in the background.
+- **Reification**: The act of exposing a settled spend to the physical world — the reificator's screen lights up and the casher sees the amount.
+- **Settlement**: The reificator submits the customer's ZK proof on-chain and waits for confirmation. Happens asynchronously, before the customer visits the shop.
+- **Redemption**: The casher acknowledges the reified amount and applies the discount.
+- **Topup**: The casher loads new reward points. The reificator signs a fresh cap certificate and sends it to the customer's phone.
 
-### X. Correct Before Optimized
+#### Two Signing Roles
 
-Start simple, prove correctness, then optimize. One UTXO per user before a shared trie. Single-issuer spends before multi-issuer. snarkjs before native prover. Every step end-to-end testable before the next.
+The reificator signs in two capacities:
 
-### XI. Nix-First
+1. **As the shop** (issuer): signs cap certificates (`issuer_pk` in the circuit). These are verified inside the ZK proof on-chain.
+2. **As itself** (reificator identity): signs reification certificates, bound to its own identity and a nonce. These are verified at redemption by checking the nonce against the unredeemed set.
+
+#### Flow
+
+1. **At home**: Customer contacts the reificator remotely with a spending proof.
+2. **Settlement**: Reificator submits the proof on-chain, waits for confirmation. Stores the nonce.
+3. **Certificate**: Reificator returns a signed reification certificate (with nonce) to the phone.
+4. **At the shop**: Customer reaches the cashing point. Reificator screen is dormant.
+5. **Reification**: Customer presents certificate. Reificator verifies nonce is in its unredeemed set, switches to present state — displays the spent amount.
+6. **Redemption**: Casher acknowledges, applies the discount. Nonce consumed.
+7. **Topup**: Casher sets new reward amount. Reificator signs a fresh cap certificate for the shop, sends to phone.
+8. **Dormant**: Reificator screen goes dormant. Background settlement continues.
+
+#### Security Properties
+
+- **No double-spend**: Settlement happens before the customer visits the shop. On-chain confirmation has minutes/hours, not seconds.
+- **No amount tampering**: The ZK proof binds the spend amount `d`. The reificator cannot alter it without invalidating the proof. The on-chain validator enforces this.
+- **No certificate replay**: Reification certificates carry nonces. Each nonce is consumed on redemption.
+- **Reificator-bound**: Reification certificates are redeemable only at the reificator that issued them.
+
+#### State
+
+| Location | What it holds |
+|----------|--------------|
+| **On-chain** | `user_id → commit(spent)` per issuer (the UTXO at the script address) |
+| **User's phone** | User secret, spend randomness, cap certificates (signed by reificators-as-shops), reification certificates (signed by reificators-as-themselves) |
+| **Reificator** | Signing key (shop + self), set of unredeemed nonces |
+
+### VIII. On-Chain State: Nested Trie
+
+The shared state is a Merkle Patricia Trie of tries: issuer -> user -> committed spend counter. A spend transaction updates one or more leaves, each with its own Groth16 proof. The trie root sits in a single coalition UTXO.
+
+### IX. Correct Before Optimized
+
+Start simple, prove correctness, then optimize. One UTXO per user before the trie. Single-issuer spends before multi-issuer. snarkjs before native prover. Every step end-to-end testable before the next.
+
+### X. Nix-First
 
 All dependencies, builds, and CI are Nix-managed. The flake produces all derivations. No global installs, no version drift.
-
-## Open Design Problem: Settlement Timing at Checkout
-
-L1 settlement requires multiple confirmations (~5 minutes for reasonable confidence). At a physical checkout, this creates a window for double-spending: the user could present the same spend to multiple cashiers before any transaction is confirmed.
-
-Explored and rejected approaches:
-- **Mempool/lock service**: requires coalition infrastructure (violates Principle III)
-- **Freeze-and-confirm two-step**: shifts double-spend problem to the redemption side
-- **Mint-and-burn tokens**: cashier gives discount before burn confirms, same gap
-- **Physical tokens**: can be replicated or stolen back
-- **Hydra L2**: requires all participants online, stalls if one drops
-
-Pre-commitment model (freeze before shopping) partially mitigates this but introduces overcommit/undercommit complexity.
-
-This remains an open problem. The protocol is correct for scenarios where settlement time is acceptable (online orders, pre-commitment with sufficient lead time, low-value spends where the double-spend risk is accepted).
 
 ## Technology Stack
 
 - **On-chain**: Aiken (Plutus V3), BLS12-381 builtins for Groth16 pairing verification
-- **Circuits**: Circom 2 targeting BLS12-381, Poseidon commitments, Groth16 proof system
-- **Off-chain**: Haskell (GHC 9.10+), cardano-node-clients for transaction construction
+- **Circuits**: Circom 2 targeting BLS12-381, Poseidon commitments, EdDSA-Poseidon on Jubjub, Groth16 proof system
+- **Off-chain**: Haskell (GHC 9.8.4), cardano-node-clients for transaction construction
 - **Point compression**: Rust FFI via blst crate
-- **Proof generation**: snarkjs (to be replaced by native prover)
+- **Proof generation**: snarkjs (to be replaced by native Rust prover, see issue #2)
+- **State**: Merkle Patricia Trie (aiken-lang/merkle-patricia-forestry)
 
 ## Development Workflow
 
@@ -84,6 +107,6 @@ This remains an open problem. The protocol is correct for scenarios where settle
 
 ## Governance
 
-This constitution supersedes all other practices. Privacy guarantees (Principle V) and proof soundness (Principle VI) cannot be weakened. The coalition model (Principle I) is the project's reason for existence.
+This constitution supersedes all other practices. Privacy guarantees (Principle IV) and proof soundness (Principle V) cannot be weakened. The coalition model (Principle I) is the project's reason for existence.
 
-**Version**: 4.0.0 | **Ratified**: 2026-04-15
+**Version**: 4.0.0 | **Ratified**: 2026-04-16
