@@ -75,17 +75,23 @@ The reificator signs in two capacities:
 |----------|--------------|
 | **On-chain** | `user_id → commit(spent)` per issuer (the UTXO at the script address) |
 | **User's phone** | User secret, spend randomness, cap certificates (signed by reificators-as-shops), reification certificates (signed by reificators-as-themselves) |
-| **Reificator** | Signing key (shop + self), set of unredeemed nonces |
+| **Reificator** | Signing key (shop + self), set of unredeemed nonces, Cardano payment key + UTXO for fees |
 
-### VIII. On-Chain State: Nested Trie
+### VIII. Reificator Funding
+
+The reificator is a transacting device — it submits on-chain transactions and pays fees in ADA. The shop funds the reificator, the same way it pays card processing fees. The reificator holds a Cardano payment key and a UTXO for fees.
+
+Fee deduction from loyalty points (converting points to ADA on-chain) is a future optimization, not a day-one requirement.
+
+### IX. On-Chain State: Nested Trie
 
 The shared state is a Merkle Patricia Trie of tries: issuer -> user -> committed spend counter. A spend transaction updates one or more leaves, each with its own Groth16 proof. The trie root sits in a single coalition UTXO.
 
-### IX. Correct Before Optimized
+### X. Correct Before Optimized
 
 Start simple, prove correctness, then optimize. One UTXO per user before the trie. Single-issuer spends before multi-issuer. snarkjs before native prover. Every step end-to-end testable before the next.
 
-### X. Nix-First
+### XI. Nix-First
 
 All dependencies, builds, and CI are Nix-managed. The flake produces all derivations. No global installs, no version drift.
 
