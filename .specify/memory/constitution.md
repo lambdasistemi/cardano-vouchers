@@ -1,4 +1,4 @@
-# Cardano Vouchers Constitution
+# Harvest Constitution
 
 ## Vision
 

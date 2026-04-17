@@ -1,4 +1,4 @@
-name = "lambdasistemi/cardano-bbs"
+name = "lambdasistemi/harvest"
 version = "0.1.0"
 compiler = "v1.1.21"
 plutus = "v3"

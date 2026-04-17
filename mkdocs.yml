@@ -1,6 +1,6 @@
-site_name: Cardano Vouchers
-site_url: https://lambdasistemi.github.io/cardano-vouchers/
-repo_url: https://github.com/lambdasistemi/cardano-vouchers
+site_name: Harvest
+site_url: https://lambdasistemi.github.io/harvest/
+repo_url: https://github.com/lambdasistemi/harvest
 
 theme:
   name: material

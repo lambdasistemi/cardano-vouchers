@@ -1,4 +1,4 @@
-# cardano-vouchers-001 Development Guidelines
+# harvest-001 Development Guidelines
 
 Auto-generated from all feature plans. Last updated: 2026-04-15
 

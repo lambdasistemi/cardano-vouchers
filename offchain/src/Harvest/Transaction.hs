@@ -1,5 +1,5 @@
 -- | Build a voucher spend transaction using the TxBuild DSL.
-module Cardano.Vouchers.Transaction (
+module Harvest.Transaction (
     spendVoucher
 ) where
 
@@ -15,7 +15,7 @@ import Cardano.Node.Client.TxBuild (
     , payTo'
     , spendScript
  )
-import Cardano.Vouchers.Types (
+import Harvest.Types (
     Groth16Proof
     , SpendRedeemer (..)
     , VoucherDatum (..)

@@ -1,5 +1,5 @@
 cabal-version: 3.0
-name:          cardano-vouchers
+name:          harvest
 version:       0.1.0.0
 synopsis:      ZK voucher system for Cardano using Groth16 proofs
 license:       Apache-2.0
@@ -16,9 +16,9 @@ library
     Cardano.Groth16.Compress
     Cardano.Groth16.Serialize
     Cardano.Groth16.Prove
-    Cardano.Vouchers.Types
-    Cardano.Vouchers.Transaction
-    Cardano.Vouchers.Script
+    Harvest.Types
+    Harvest.Transaction
+    Harvest.Script
   build-depends:
     , base                  >= 4.14 && < 5
     , bytestring            >= 0.11
@@ -45,7 +45,7 @@ executable encode-vk
   ghc-options:     -Wall
   build-depends:
     , base
-    , cardano-vouchers
+    , harvest
     , aeson
     , bytestring
     , base16-bytestring
@@ -61,7 +61,7 @@ test-suite unit-tests
     E2ESpec
   build-depends:
     , base
-    , cardano-vouchers
+    , harvest
     , bytestring
     , aeson
     , base16-bytestring

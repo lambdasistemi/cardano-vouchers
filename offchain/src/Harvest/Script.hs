@@ -2,7 +2,7 @@
 {-# LANGUAGE TypeApplications #-}
 
 -- | Load the voucher spend validator from Aiken blueprint output.
-module Cardano.Vouchers.Script (
+module Harvest.Script (
     loadScript
     , scriptAddr
 ) where

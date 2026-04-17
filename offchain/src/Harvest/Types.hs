@@ -1,5 +1,5 @@
 -- | Voucher on-chain types with ToData instances matching the Aiken encoding.
-module Cardano.Vouchers.Types (
+module Harvest.Types (
     VoucherDatum (..)
     , SpendRedeemer (..)
     , Groth16Proof (..)
