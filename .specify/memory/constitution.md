@@ -38,7 +38,7 @@ Spending and redemption are decoupled in time and space.
 
 #### Terminology
 
-- **Reificator**: A device at a cashing point (shop). Has a signing key, settles proofs on-chain, signs certificates. Stores unredeemed nonces. Screen is dormant between interactions but settlement runs continuously in the background.
+- **Reificator**: A device at a cashing point (shop). Has a signing key, settles proofs on-chain, signs certificates. Stateless — all state is on-chain (pending trie). Screen is dormant between interactions but settlement runs continuously in the background.
 - **Reification**: The act of exposing a settled spend to the physical world — the reificator's screen lights up and the casher sees the amount.
 - **Settlement**: The reificator submits the customer's ZK proof on-chain and waits for confirmation. Happens asynchronously, before the customer visits the shop.
 - **Redemption**: The casher acknowledges the reified amount and applies the discount.
@@ -77,8 +77,8 @@ The reificator can redeem but cannot revert. The shop can revert but cannot rede
 2. **Settlement**: Reificator submits the proof on-chain. The spend counter updates and a pending entry is created in the pending trie (committed state).
 3. **Certificate**: Reificator returns a signed reification certificate (with nonce) to the phone.
 4. **At the shop**: Customer reaches the cashing point. Reificator screen is dormant.
-5. **Reification**: Customer presents certificate. Reificator verifies nonce exists in the pending trie, switches to present state — displays the spent amount.
-6. **Redemption**: Casher acknowledges, applies the discount. Reificator signs the redemption — pending entry removed from trie (redeemed).
+5. **Reification**: Customer presents certificate. Reificator verifies its own signature, queries data provider for Merkle membership proof of the nonce in the pending trie. If valid — switches to present state, displays the spent amount.
+6. **Redemption**: Casher acknowledges, applies the discount. Reificator submits redemption request — pending entry removed from trie (redeemed).
 7. **Topup**: Casher sets new reward amount. Reificator signs a fresh cap certificate for the shop, sends to phone.
 8. **Dormant**: Reificator screen goes dormant. Background settlement continues.
 
@@ -95,7 +95,7 @@ If a reificator is stolen or destroyed:
 
 - **No double-spend**: Settlement happens before the customer visits the shop. On-chain confirmation has minutes/hours, not seconds.
 - **No amount tampering**: The ZK proof binds the spend amount `d` as a public input. The reificator cannot alter it without invalidating the proof.
-- **No certificate replay**: Reification certificates carry nonces. Each nonce maps to a pending trie entry, consumed on redemption.
+- **No certificate replay**: Reification certificates carry nonces. Each nonce maps to a pending trie entry on-chain, consumed on redemption.
 - **Reificator-bound**: Reification certificates are redeemable only at the reificator that issued them.
 - **Recoverable**: Stolen, destroyed, or malfunctioning devices cannot prevent recovery. The shop's master key can revert all pending entries. The pending trie provides on-chain evidence for the shop to act on.
 - **Threat model**: The protocol protects against device failure (malfunction, theft, vandalism), not against malicious shops. The shop is assumed cooperative — it has every incentive to serve its customers. Collusion between shop and reificator is outside the threat model.
@@ -108,7 +108,7 @@ If a reificator is stolen or destroyed:
 | **On-chain — reificator trie** | shop → reificator_pk (authorized devices) |
 | **On-chain — pending trie** | reificator_pk → nonce → {user_id, amount} |
 | **User's phone** | User secret, spend randomness, cap certificates (signed by shop key), reification certificates (signed by reificator key) |
-| **Reificator** | Reificator key (burned by distributor), shop key (burned by shop), Cardano payment key + UTXO for fees |
+| **Reificator** | Reificator key (burned by distributor), shop key (burned by shop), Cardano payment key + UTXO for fees. Stateless — no local data beyond keys. |
 
 ### VIII. Economic Model
 
