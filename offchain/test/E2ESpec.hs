@@ -12,8 +12,8 @@ import Cardano.Groth16.Serialize (
  )
 import Cardano.Groth16.Types (CompressedProof (..), CompressedVK (..), SnarkjsProof, SnarkjsVK)
 import Cardano.PlutusData (encodePlutusData)
-import Cardano.Vouchers.Script (loadScript, scriptAddr)
-import Cardano.Ledger.BaseTypes (Network (..))  -- re-exported via cardano-vouchers
+import Harvest.Script (loadScript, scriptAddr)
+import Cardano.Ledger.BaseTypes (Network (..))  -- re-exported via harvest
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as Base16

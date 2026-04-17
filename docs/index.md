@@ -1,4 +1,4 @@
-# Cardano Vouchers
+# Harvest
 
 A loyalty coalition protocol on Cardano. Multiple businesses form a coalition, each issuing voucher certificates to customers. Customers spend vouchers at any coalition member using zero-knowledge proofs.
 

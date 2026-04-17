@@ -49,7 +49,7 @@
         mkdocsPkg = mkdocs.devShells.${system}.default;
 
         project = import ./nix/project.nix { inherit pkgs groth16-ffi CHaP mkdocsPkg; };
-        components = project.hsPkgs.cardano-vouchers.components;
+        components = project.hsPkgs.harvest.components;
 
         # Circuit compilation (Circom → R1CS + WASM)
         circuit = pkgs.buildNpmPackage {

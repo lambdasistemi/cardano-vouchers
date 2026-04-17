@@ -205,7 +205,7 @@ L1 throughput (~15 spends/minute with Groth16 verification) limits volume. Milli
 ## File Map
 
 ```
-cardano-vouchers/
+harvest/
 ├── circuits/
 │   ├── voucher_spend.circom          # Main ZK circuit (999 constraints)
 │   ├── generate_proof.js             # Proof generation + verification
@@ -228,7 +228,7 @@ cardano-vouchers/
 │       ├── groth16.ak                # Groth16 pairing verification
 │       └── types.ak                  # On-chain data types
 ├── offchain/
-│   ├── cardano-vouchers.cabal
+│   ├── harvest.cabal
 │   ├── cabal.project
 │   ├── cbits/groth16-ffi/            # Rust: BLS12-381 point compression
 │   ├── src/
