@@ -1,7 +1,24 @@
-{ pkgs, components, groth16-ffi }:
+{ pkgs, components, groth16-ffi, cardanoNode }:
 {
   library = components.library;
-  unit-tests = components.tests.unit-tests;
+
+  # The unit-tests derivation needs:
+  #   - cardano-node on PATH, so DevnetSpendSpec can spawn a devnet via
+  #     withDevnet from cardano-node-clients:devnet;
+  #   - the groth16-ffi shared library on LD_LIBRARY_PATH for the Groth16
+  #     point-compression tests;
+  #   - HARVEST_FIXTURES_DIR pointing at the authoritative fixture tree,
+  #     because the test binary runs from the nix store and can't see the
+  #     repo layout.
+  unit-tests = pkgs.writeShellApplication {
+    name = "unit-tests";
+    runtimeInputs = [ cardanoNode ];
+    text = ''
+      export LD_LIBRARY_PATH="${groth16-ffi}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+      export HARVEST_FIXTURES_DIR="${../offchain/test/fixtures}"
+      exec ${components.tests.unit-tests}/bin/unit-tests "$@"
+    '';
+  };
 
   lint = pkgs.writeShellApplication {
     name = "lint";
