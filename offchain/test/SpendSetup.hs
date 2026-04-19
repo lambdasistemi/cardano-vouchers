@@ -96,12 +96,16 @@ data DeployedSpend = DeployedSpend
     { dsScriptTxIn :: TxIn
     , dsScriptTxOut :: TxOut ConwayEra
     , dsScriptAddr :: Addr
-    , dsReificatorTxIn :: TxIn
-    , dsReificatorTxOut :: TxOut ConwayEra
-    , dsReificatorPay :: Coin
-    {- ^ Value the setup tx paid to the reificator — exposed so tests
-    can cross-check the funding amount.
+    , dsReificatorFeeTxIn :: TxIn
+    , dsReificatorFeeTxOut :: TxOut ConwayEra
+    , dsReificatorCollateralTxIn :: TxIn
+    , dsReificatorCollateralTxOut :: TxOut ConwayEra
+    , dsReificatorFeePay :: Coin
+    {- ^ Value the setup tx paid to the reificator's fee UTxO —
+    exposed so tests can cross-check the funding amount.
     -}
+    , dsReificatorCollateralPay :: Coin
+    -- ^ Value the setup tx paid to the reificator's collateral UTxO.
     , dsScriptPay :: Coin
     -- ^ Value locked at the script address in the VoucherDatum UTxO.
     }
@@ -137,7 +141,13 @@ deploySpendState env bundle = do
                 , vdCommitSpent = commitOld
                 }
 
-        reificatorPay = Coin 100_000_000
+        -- Two distinct reificator outputs because a Cardano tx can
+        -- use a given UTxO as EITHER a regular input (fees, balance)
+        -- OR a collateral input, never both — on a successful script
+        -- run, collateral is untouched, which would leave a UTxO
+        -- double-counted in the balance equation.
+        reificatorFeePay = Coin 50_000_000
+        reificatorCollateralPay = Coin 10_000_000
         scriptPay = Coin 5_000_000
 
         signerHash :: KeyHash Guard
@@ -156,7 +166,11 @@ deploySpendState env bundle = do
 
         prog = do
             _ <- spend seedIn
-            _ <- payTo (deReificatorAddr env) (injectCoin reificatorPay)
+            _ <- payTo (deReificatorAddr env) (injectCoin reificatorFeePay)
+            _ <-
+                payTo
+                    (deReificatorAddr env)
+                    (injectCoin reificatorCollateralPay)
             _ <- payTo' scriptAddress (injectCoin scriptPay) voucherDatum
             requireSignature signerHash
             _ <- peek (const (Ok ()))
@@ -189,7 +203,9 @@ deploySpendState env bundle = do
     reifUtxos <- waitForUtxos (deProvider env) (deReificatorAddr env) 30
     scriptUtxos <- waitForUtxos (deProvider env) scriptAddress 30
 
-    (reifIn, reifOut) <- pickOne "reificator" reificatorPay reifUtxos
+    (reifFeeIn, reifFeeOut) <- pickOne "reificator fee" reificatorFeePay reifUtxos
+    (reifColIn, reifColOut) <-
+        pickOne "reificator collateral" reificatorCollateralPay reifUtxos
     (scriptIn, scriptOut) <- pickOne "script" scriptPay scriptUtxos
 
     pure
@@ -197,9 +213,12 @@ deploySpendState env bundle = do
             { dsScriptTxIn = scriptIn
             , dsScriptTxOut = scriptOut
             , dsScriptAddr = scriptAddress
-            , dsReificatorTxIn = reifIn
-            , dsReificatorTxOut = reifOut
-            , dsReificatorPay = reificatorPay
+            , dsReificatorFeeTxIn = reifFeeIn
+            , dsReificatorFeeTxOut = reifFeeOut
+            , dsReificatorCollateralTxIn = reifColIn
+            , dsReificatorCollateralTxOut = reifColOut
+            , dsReificatorFeePay = reificatorFeePay
+            , dsReificatorCollateralPay = reificatorCollateralPay
             , dsScriptPay = scriptPay
             }
   where

@@ -133,10 +133,15 @@ spec = describe "Devnet spend end-to-end (FR-001, FR-002)" $ do
             -- validator has nothing to read user_id / commit_spent from.
             (dsScriptTxOut d ^. datumTxOutL) `shouldNotBe` NoDatum
 
-            -- The reificator output is tied to the reificator
-            -- address and the declared funding amount.
-            (dsReificatorTxOut d ^. addrTxOutL) `shouldBe` deReificatorAddr env
-            (dsReificatorTxOut d ^. coinTxOutL) `shouldBe` dsReificatorPay d
+            -- Both reificator outputs are at the reificator address
+            -- with their declared amounts. Fee and collateral are
+            -- deliberately separate UTxOs (see SpendSetup comment).
+            (dsReificatorFeeTxOut d ^. addrTxOutL) `shouldBe` deReificatorAddr env
+            (dsReificatorFeeTxOut d ^. coinTxOutL) `shouldBe` dsReificatorFeePay d
+            (dsReificatorCollateralTxOut d ^. addrTxOutL) `shouldBe` deReificatorAddr env
+            (dsReificatorCollateralTxOut d ^. coinTxOutL)
+                `shouldBe` dsReificatorCollateralPay d
+            dsReificatorFeeTxIn d `shouldSatisfy` (/= dsReificatorCollateralTxIn d)
 
         it "a customer spends at an acceptor — validator accepts" $ \_env ->
             pendingWith "T021: spend tx submit once harness + re-sign land"
