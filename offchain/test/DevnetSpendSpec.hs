@@ -60,14 +60,17 @@ module DevnetSpendSpec (spec) where
 
 import Cardano.Ledger.Api.Scripts.Data (Datum (NoDatum))
 import Cardano.Ledger.Api.Tx.Out (addrTxOutL, coinTxOutL, datumTxOutL)
+import Cardano.Node.Client.Submitter (SubmitResult (..))
 import DevnetEnv (DevnetEnv (..), withEnv)
 import Fixtures (SpendBundle (..), loadBundle)
 import Lens.Micro ((^.))
+import SpendScenario (identityMutations, submitSpend)
 import SpendSetup (DeployedSpend (..), deploySpendState)
 import Test.Hspec (
     Spec,
     around,
     describe,
+    expectationFailure,
     it,
     pendingWith,
     runIO,
@@ -143,8 +146,20 @@ spec = describe "Devnet spend end-to-end (FR-001, FR-002)" $ do
                 `shouldBe` dsReificatorCollateralPay d
             dsReificatorFeeTxIn d `shouldSatisfy` (/= dsReificatorCollateralTxIn d)
 
-        it "a customer spends at an acceptor — validator accepts" $ \_env ->
-            pendingWith "T021: spend tx submit once harness + re-sign land"
+        -- The golden-path scenario. Deploy the voucher script UTxO
+        -- and the reificator's fee + collateral UTxOs, then build
+        -- and submit the settlement tx. Any rejection fails the
+        -- test — we don't match on the error text because the
+        -- ledger may reword it across versions, only the constructor
+        -- matters.
+        it "a customer spends at an acceptor — validator accepts" $ \env -> do
+            deployed <- deploySpendState env bundle
+            result <- submitSpend env bundle deployed identityMutations
+            case result of
+                Submitted _txId -> pure ()
+                Rejected reason ->
+                    expectationFailure
+                        ("validator rejected spend tx: " <> show reason)
 
         -- == Tampered signed_data (T030, FR-002.1) ==
         --

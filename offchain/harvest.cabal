@@ -68,12 +68,14 @@ test-suite unit-tests
     SpendHarnessSpec
     DevnetEnv
     SpendSetup
+    SpendScenario
   build-depends:
     , base
     , harvest
     , bytestring
     , aeson
     , base16-bytestring
+    , cardano-crypto-class
     , cardano-ledger-api
     , cardano-ledger-conway
     , cardano-ledger-core
