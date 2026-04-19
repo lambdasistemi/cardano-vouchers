@@ -13,11 +13,12 @@ module DevnetEnv (
     withEnv,
 ) where
 
--- FIXME: harvest's test-suite imports ledger types directly
--- (Addr, ConwayEra, PParams, TxIn, TxOut). Ideally these come through
--- cardano-node-clients re-exports so the Haskell dep surface is a single
--- public seam. Discussion held open; revisit once the devnet scenarios
--- are green.
+-- The ledger packages (cardano-ledger-core / -api / -conway) are
+-- the expected low-level seam: harvest's library and the
+-- cardano-node-clients:devnet sub-library both import from them
+-- directly. The invariant harvest preserves is NOT using
+-- cardano-api — the higher-level wrapper — and this test file
+-- honours it (no cardano-api imports; confirmed empty grep).
 import Cardano.Ledger.Address (Addr)
 import Cardano.Ledger.Api.Tx.Out (TxOut)
 import Cardano.Ledger.Conway (ConwayEra)
