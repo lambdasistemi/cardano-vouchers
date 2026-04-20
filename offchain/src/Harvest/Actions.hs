@@ -34,11 +34,17 @@ module Harvest.Actions (
     addShop,
     addReificator,
     revokeReificator,
+
+    -- * Customer-facing transitions
+    settle,
+    redeem,
+    revert,
 ) where
 
 import qualified Data.ByteString as BS
 import Data.ByteString (ByteString)
 import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 
@@ -163,3 +169,109 @@ revokeReificator reif sig st
     | reif `Set.notMember` hsReificators st = Left ReificatorNotRegistered
     | otherwise =
         Right st {hsReificators = Set.delete reif (hsReificators st)}
+
+{- | Stub proof-validity predicate mirroring 'sigValid': a
+'ProofEvidence' is treated as valid iff its bytestring is non-empty.
+Tests drive the rejection path via @ProofEvidence mempty@.
+-}
+proofValid :: ProofEvidence -> Bool
+proofValid (ProofEvidence bs) = not (BS.null bs)
+
+{- | Settlement: mutate state for a successful customer settlement.
+
+Checks — in order of declared rejection:
+
+  * 'ShopNotRegistered' — @shop ∉ hsShops@.
+  * 'ReificatorNotRegistered' — @reif ∉ hsReificators@.
+  * 'CustomerProofInvalid' — the abstract proof predicate fails.
+  * 'BindingMismatch' — if the customer already has an entry, its
+    stored @(shop, reificator)@ must match the settlement's.
+
+On success, insert-or-update the entry with the new @commitSpent@.
+The pure twin uses a single 'UserId'-keyed map; multi-shop support
+would promote the key to @(UserId, PubKey)@ per actions.md.
+-}
+settle ::
+    UserId ->
+    -- | Shop the settlement tx binds to.
+    PubKey ->
+    -- | Reificator submitting the tx.
+    PubKey ->
+    -- | New commitment for the entry after settlement.
+    Commit ->
+    -- | Opaque proof + signature bundle.
+    ProofEvidence ->
+    HarvestState ->
+    Step
+settle user shop reif commitNew evidence st
+    | shop `Set.notMember` hsShops st = Left ShopNotRegistered
+    | reif `Set.notMember` hsReificators st = Left ReificatorNotRegistered
+    | not (proofValid evidence) = Left CustomerProofInvalid
+    | otherwise = case Map.lookup user (hsEntries st) of
+        Just existing
+            | veShop existing /= shop || veReificator existing /= reif ->
+                Left BindingMismatch
+        _ ->
+            let entry =
+                    VoucherEntry
+                        { veCommitSpent = commitNew
+                        , veShop = shop
+                        , veReificator = reif
+                        }
+             in Right
+                    st
+                        { hsEntries =
+                            Map.insert user entry (hsEntries st)
+                        }
+
+{- | Redemption: remove the customer's entry.
+
+Rejections:
+
+  * 'NoEntryToRedeem' — the user has no live entry.
+  * 'ReificatorNotRegistered' — the submitting reificator has been
+    revoked.
+  * 'WrongReificatorForRedeem' — the submitting reificator isn't the
+    one that accepted the settlements.
+  * 'CustomerSigInvalid' — the attached signature fails the stub.
+-}
+redeem :: UserId -> PubKey -> Sig -> HarvestState -> Step
+redeem user reif sig st =
+    case Map.lookup user (hsEntries st) of
+        Nothing -> Left NoEntryToRedeem
+        Just entry
+            | reif `Set.notMember` hsReificators st ->
+                Left ReificatorNotRegistered
+            | veReificator entry /= reif ->
+                Left WrongReificatorForRedeem
+            | not (sigValid sig) ->
+                Left CustomerSigInvalid
+            | otherwise ->
+                Right st {hsEntries = Map.delete user (hsEntries st)}
+
+{- | Revert: roll the customer's entry back to a prior commitment.
+
+The prototype models the \"rollback\" branch of revert — update the
+stored @commitSpent@ to the supplied @prior@. The \"full removal\"
+branch from actions.md is accessible by deleting the entry
+out-of-band; the validator accepts both and the shop is responsible
+for economic correctness.
+
+Rejections:
+
+  * 'NoEntryToRevert' — the user has no live entry.
+  * 'CustomerSigInvalid' — the shop master-key signature stub fails.
+-}
+revert :: UserId -> Commit -> Sig -> HarvestState -> Step
+revert user prior sig st =
+    case Map.lookup user (hsEntries st) of
+        Nothing -> Left NoEntryToRevert
+        Just entry
+            | not (sigValid sig) -> Left CustomerSigInvalid
+            | otherwise ->
+                let entry' = entry {veCommitSpent = prior}
+                 in Right
+                        st
+                            { hsEntries =
+                                Map.insert user entry' (hsEntries st)
+                            }
