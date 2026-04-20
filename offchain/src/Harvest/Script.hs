@@ -1,10 +1,13 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeApplications #-}
 
--- | Load the voucher spend validator from Aiken blueprint output.
+-- | Load the voucher spend and coalition-metadata validators from
+-- Aiken blueprint output.
 module Harvest.Script (
     loadScript,
     scriptAddr,
+    coalitionScript,
+    coalitionAddr,
 ) where
 
 import Cardano.Ledger.Address (Addr (..))
@@ -48,3 +51,20 @@ scriptAddr :: Network -> AlonzoScript ConwayEra -> Addr
 scriptAddr network script =
     let sh = hashScript @ConwayEra script
      in Addr network (ScriptHashObj sh) StakeRefNull
+
+{- | Load the coalition-metadata validator from its applied compiled
+bytes.
+
+The coalition-metadata validator takes no parameters, so the
+\"applied\" artifact is just the raw @compiledCode@ emitted by
+@aiken build@ for @coalition_metadata.coalition_metadata.spend@.
+-}
+coalitionScript :: SBS.ShortByteString -> AlonzoScript ConwayEra
+coalitionScript = loadScript
+
+{- | Compute the coalition-metadata script address on a given network.
+
+Convenience wrapper: @'scriptAddr' n . 'coalitionScript'@.
+-}
+coalitionAddr :: Network -> SBS.ShortByteString -> Addr
+coalitionAddr network = scriptAddr network . coalitionScript
