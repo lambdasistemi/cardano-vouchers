@@ -1,5 +1,6 @@
 module Main where
 
+import qualified DevnetFullFlowSpec
 import qualified DevnetSpendSpec
 import qualified E2ESpec
 import qualified Ed25519Spec
@@ -16,3 +17,4 @@ main = hspec $ do
     Ed25519Spec.spec
     SpendHarnessSpec.spec
     DevnetSpendSpec.spec
+    DevnetFullFlowSpec.spec
