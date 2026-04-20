@@ -5,6 +5,37 @@
 **Status**: Draft
 **Input**: Harvest issue #9 — devnet end-to-end test covering the complete Harvest protocol flow.
 
+## Scope boundary — prototype, not production
+
+This ticket delivers a **working end-to-end prototype** that exercises
+every protocol role (coalition, issuer, shop, reificator, customer)
+and every flow step (onboard, topup, settle, redeem, revert, revoke)
+against a real Cardano devnet.
+
+**Security is not weakened.** Every cryptographic and validator
+invariant the constitution requires — proof binding of `d` and
+`commit_spent`, customer Ed25519 binding of acceptor_pk and TxOutRef,
+issuer cap-certificate binding, enforced reificator authorisation on
+settlement txs — holds in this prototype exactly as it holds in the
+eventual MPF version.
+
+What this ticket **does not** solve is **scale / usability**:
+
+- Capital efficiency at scale (min-ADA lockup grows linearly in
+  customer count).
+- Succinct on-chain membership proofs for large sets (linear list
+  scan instead of MPF proof).
+- Mediated concurrent writes to a shared trie (one registry-update
+  transaction at a time, no MPFS mediator).
+
+In short: security has nothing to do with usability. The prototype is
+operationally unusable at scale but correct and complete at N ∈
+{1,2,3}. Every role becomes a first-class on-chain concept (registry
+entries for shops/reificators, enforced reificator authorisation on
+settlement txs, shop-bound per-customer entries) so that the full
+protocol narrative is expressible in devnet tests. Scale concerns are
+explicitly deferred to #5 / #8.
+
 ## User Scenarios & Testing *(mandatory)*
 
 Each user story below names an actor in the Harvest protocol and a
@@ -192,15 +223,15 @@ the validator with any rejection constructor.
   on demand and tear it down when the test run completes, such that
   each test run starts from a known genesis state.
 
-- **FR-002**: The test suite MUST deploy a coalition root UTxO whose
-  datum encodes an initial (empty) registry trie and an initial
-  (empty) spend trie, using the applied validator script that ships
-  on-chain.
+- **FR-002**: The test suite MUST deploy a coalition-metadata UTxO
+  whose datum encodes the set of registered shops, the set of
+  registered reificators, and the issuer public key. This UTxO acts
+  as a protocol-wide registry record, not a scalable trie.
 
-- **FR-003**: The test suite MUST register a shop via a transaction
-  that adds `shop_pk` and `reificator_pk` to the registry trie, and
-  MUST assert that the post-transaction registry trie reflects the
-  additions.
+- **FR-003**: The test suite MUST register a shop and its reificator
+  via a transaction that updates the coalition-metadata UTxO's datum
+  to include their public keys, and MUST assert that the post-
+  transaction datum reflects the additions.
 
 - **FR-004**: The test suite MUST produce (or load from fixtures) a
   cap certificate signed off-line by an issuer, such that the
@@ -220,7 +251,8 @@ the validator with any rejection constructor.
 
 - **FR-007**: The test suite MUST submit a redemption transaction
   signed by the reificator key and MUST assert the validator accepts
-  it and the customer's entry is removed from the spend trie.
+  it and the customer's script UTxO is consumed without a replacement
+  produced (i.e., the customer's pending entry is removed).
 
 - **FR-008**: The test suite MUST submit a post-redemption settlement
   against a freshly-issued cap certificate and MUST assert the
@@ -231,9 +263,11 @@ the validator with any rejection constructor.
   and the counter is rolled back by the reverted `d`.
 
 - **FR-010**: The test suite MUST submit a reificator revocation
-  transaction, assert the registry entry is removed, then submit a
-  follow-on settlement under the revoked reificator and assert the
-  validator rejects it with any rejection constructor.
+  transaction that updates the coalition-metadata UTxO's datum to
+  remove the reificator's public key, assert the datum reflects the
+  removal, then submit a follow-on settlement naming the revoked
+  reificator and assert the validator rejects it with any rejection
+  constructor.
 
 - **FR-011**: The test suite MUST reuse the devnet bracket, spend-
   scenario builder, and Mutations framework introduced by the
@@ -245,9 +279,13 @@ the validator with any rejection constructor.
   matching the documentation-first style established in
   `DevnetSpendSpec`.
 
-- **FR-013**: The test suite MUST NOT require MPFS coordination; the
-  settlement and redemption transactions submit directly to the node.
-  (MPFS integration is tracked separately under issue #8.)
+- **FR-013**: The test suite MUST NOT depend on MPF tries or MPFS
+  mediation. On-chain membership checks are expressed as linear scans
+  over lists carried in the coalition-metadata UTxO's datum, consumed
+  as a reference input by settlement transactions. (MPF on-chain —
+  issue #5 — and MPFS mediation — issue #8 — are out of scope here
+  and will later replace the list-based registry without changing
+  the security guarantees.)
 
 - **FR-014**: The test suite MUST NOT exercise multi-certificate
   spend paths (combining caps from multiple issuers); these are
@@ -255,15 +293,17 @@ the validator with any rejection constructor.
 
 ### Key Entities
 
-- **Coalition root UTxO**: The script UTxO carrying the registry trie
-  (shops, reificators) and the spend trie (pending customer entries).
-  Mutated by every settlement, redemption, revert, and registry
-  transaction.
-- **Registry trie**: Membership structure recording the set of
-  registered shops and reificators, keyed by their public keys.
-- **Spend trie**: Pending entries keyed by `(user_id, acceptor)` with
-  a counter accumulated by settlements, decremented by reverts, and
-  removed by redemptions.
+- **Coalition-metadata UTxO**: A single protocol-wide UTxO whose
+  datum enumerates the registered shops (`shop_pk` list), the
+  registered reificators (`reificator_pk` list), and the issuer
+  public key. Consumed only by coalition-governance transactions
+  (shop onboarding, reificator revocation). Referenced — never
+  consumed — by settlement, redemption, and revert transactions.
+- **Per-customer script UTxO**: One script UTxO per customer,
+  carrying the customer's `user_id` and `commit_spent`, plus the
+  `shop_pk` and `reificator_pk` that authorised the customer's
+  entry. Consumed and re-produced by each settlement, consumed
+  without replacement by redemption.
 - **Cap certificate**: Off-line, issuer-signed authorisation binding a
   customer's identity and spending cap for a cycle.
 - **Settlement transaction**: Submitted by the reificator on behalf of
@@ -315,9 +355,13 @@ the validator with any rejection constructor.
   the baseline for every transaction submitted in this suite; no new
   dependency on `cardano-api` is introduced.
 - Target Cardano node version is 10.7.1.
-- MPFS integration (issue #8), multi-certificate spend (issue #7), and
-  v2 privacy redesign (issue #13) are out of scope for this ticket
-  even though the issue body listed #8 as a blocker; #15 shipped
-  without MPFS and the same decision carries forward.
+- MPF on-chain (issue #5), MPFS mediation (issue #8), multi-
+  certificate spend (issue #7), and v2 privacy redesign (issue #13)
+  are out of scope for this ticket. The issue body listed #8 as a
+  blocker; this spec overrides that decision because security does
+  not depend on scale infrastructure and #15 already shipped along
+  this path. When #5 / #8 land, the on-chain registry moves from
+  "list carried in a reference UTxO" to "MPF root with membership
+  proofs" without changing any of the invariants asserted here.
 - Ledger version changes may reword rejection reasons; tests therefore
   assert only on `SubmitResult` constructors, not error strings.
