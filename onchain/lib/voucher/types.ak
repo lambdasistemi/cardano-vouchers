@@ -20,12 +20,23 @@ pub type VerificationKey {
   ic: List<ByteArray>,
 }
 
-/// On-chain state per user.
+/// On-chain state per (user, shop, reificator).
+///
+/// The first two fields (`user_id`, `commit_spent`) are wire-compatible
+/// with the #15 `VoucherDatum`. `shop_pk` and `reificator_pk` are
+/// frozen at first settlement and preserved by every subsequent
+/// settlement on this UTxO (see
+/// `specs/003-devnet-full-flow/contracts/voucher-datum.md`).
 pub type VoucherDatum {
   /// User identity: Poseidon(user_secret)
   user_id: Int,
   /// Poseidon commitment to the running spend total.
   commit_spent: Int,
+  /// 32-byte Ed25519 pk of the shop that authorised this entry.
+  shop_pk: ByteArray,
+  /// 32-byte Ed25519 pk of the reificator that submitted the first
+  /// settlement.
+  reificator_pk: ByteArray,
 }
 
 /// Redeemer for a spend transaction.
