@@ -43,8 +43,12 @@ import qualified Data.ByteString.Char8 as BS8
 
 {- | Everything a single spend-scenario needs: a running node it can
 query and submit to, the protocol parameters for balancing, the
-genesis seed UTxO it can fund the reificator from, and a fresh
-reificator key pair.
+genesis seed UTxO, and the coalition actor key pairs.
+
+The @#15@ single-spend flow only uses @deReificator*@ — those fields
+keep their original names. @#9@ adds the issuer, shop, and shop-master
+keys on top: four pairwise-distinct Ed25519 keys generated from
+disjoint 32-byte seeds.
 -}
 data DevnetEnv = DevnetEnv
     { dePParams :: PParams ConwayEra
@@ -53,6 +57,12 @@ data DevnetEnv = DevnetEnv
     , deGenesisUtxos :: [(TxIn, TxOut ConwayEra)]
     , deReificatorKey :: SignKeyDSIGN Ed25519DSIGN
     , deReificatorAddr :: Addr
+    , deIssuerKey :: SignKeyDSIGN Ed25519DSIGN
+    , deIssuerAddr :: Addr
+    , deShopKey :: SignKeyDSIGN Ed25519DSIGN
+    , deShopAddr :: Addr
+    , deShopMasterKey :: SignKeyDSIGN Ed25519DSIGN
+    , deShopMasterAddr :: Addr
     }
 
 -- | hspec 'around'-compatible bracket.
@@ -61,10 +71,13 @@ withEnv action =
     withDevnet $ \lsq ltxs -> do
         let provider = mkN2CProvider lsq
             submitter = mkN2CSubmitter ltxs
-            reificatorKey =
-                mkSignKey (BS8.pack (replicate 32 'R'))
-            reificatorAddr =
-                enterpriseAddr (keyHashFromSignKey reificatorKey)
+            mkActor seed =
+                let k = mkSignKey (BS8.pack (replicate 32 seed))
+                 in (k, enterpriseAddr (keyHashFromSignKey k))
+            (reificatorKey, reificatorAddr) = mkActor 'R'
+            (issuerKey, issuerAddr) = mkActor 'I'
+            (shopKey, shopAddr) = mkActor 'S'
+            (shopMasterKey, shopMasterAddr) = mkActor 'M'
         pp <- queryProtocolParams provider
         utxos <- queryUTxOs provider genesisAddr
         action
@@ -75,6 +88,12 @@ withEnv action =
                 , deGenesisUtxos = utxos
                 , deReificatorKey = reificatorKey
                 , deReificatorAddr = reificatorAddr
+                , deIssuerKey = issuerKey
+                , deIssuerAddr = issuerAddr
+                , deShopKey = shopKey
+                , deShopAddr = shopAddr
+                , deShopMasterKey = shopMasterKey
+                , deShopMasterAddr = shopMasterAddr
                 }
 
 -- Keep tooling imports reachable even though this module only
