@@ -66,6 +66,7 @@ test-suite unit-tests
     SignedDataLayoutSpec
     Ed25519Spec
     DevnetSpendSpec
+    DevnetFullFlowSpec
     HarvestFlow
     SpendHarness
     SpendHarnessSpec
