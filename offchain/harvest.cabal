@@ -89,3 +89,4 @@ test-suite unit-tests
     , containers
     , hspec >= 2.0
     , microlens
+    , plutus-tx
