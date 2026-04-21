@@ -2,6 +2,7 @@ module Main where
 
 import qualified DevnetFullFlowSpec
 import qualified DevnetRedeemSpec
+import qualified DevnetRevertSpec
 import qualified DevnetSpendSpec
 import qualified E2ESpec
 import qualified Ed25519Spec
@@ -20,3 +21,4 @@ main = hspec $ do
     DevnetSpendSpec.spec
     DevnetFullFlowSpec.spec
     DevnetRedeemSpec.spec
+    DevnetRevertSpec.spec
