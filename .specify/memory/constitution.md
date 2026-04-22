@@ -20,6 +20,40 @@ The user has no Cardano wallet, no ADA, no signing keys. The user's phone holds 
 
 Coalition members do not verify each other's certificates. The on-chain validator does. A fake certificate produces an invalid Groth16 proof. The transaction fails. Nobody loses anything. The smart contract is the only trust relationship — no APIs, no shared databases, no inter-member communication needed.
 
+### III-A. Two-Layer Architecture: Hydra + L1
+
+The protocol operates across two layers with separated concerns and zero cross-contention:
+
+- **L1 (Cardano mainchain)**: shop registration, card registration, settlement, redemption, revert, and the certificate root (reference input). Open, permissionless verification. High value, low frequency.
+- **L2 (Hydra head)**: topup transactions only. Managed by the coalition. Near-zero fees, instant finality (unanimous consensus). The certificate MPF (SHA-256) lives here.
+
+The Hydra head is a staging area for topups. Periodically (daily), the head fans out to L1, producing a certificate root UTxO. This root is a reference input for all settlement transactions — read by many, updated rarely, zero contention.
+
+**Certificate anchoring**: every topup is a transaction on the Hydra head, anchored in the certificate MPF. At spend time on L1, the settlement redeemer includes a SHA-256 Merkle proof that the customer's `certificate_id` is in the committed root. The L1 validator checks this proof on-chain using existing MPF infrastructure. No Poseidon on-chain.
+
+The `certificate_id` is `Poseidon(user_id, cap)` — computed inside the ZK circuit (which already verifies the issuer's Jubjub signature over this value) and exposed as a public input. The L1 validator cross-checks the circuit's `certificate_id` against the MPF membership proof. Cap stays hidden — only the Poseidon commitment is on-chain.
+
+**Why Hydra**: topups are high-frequency, low-value. One transaction per topup on L1 would be economically prohibitive. The Hydra head provides the same Plutus validator semantics at near-zero cost. The fan-out to L1 is the only L1 transaction in the topup path.
+
+**Coalition censorship**: the Hydra head's only power is censorship (refusing to include legitimate topups). It cannot forge certificates (lacks shops' Jubjub keys), alter entries (signatures would break), or invent shops (L1 registry is frozen). Censorship is detectable: the reificator sees whether its transaction was included in the Hydra snapshot. Censorship is recoverable: the topup can be resubmitted in the next cycle.
+
+**Shop audit at fan-out**: before counter-signing the fan-out, each shop verifies the IPFS changeset:
+1. Fetch the list of changes from IPFS (CID linked to the fan-out)
+2. Every change is signed by a registered Jubjub key (shop authorized the cap) AND a registered Ed25519 key (reificator identity)
+3. All shops can validate the entire changeset — every Jubjub public key is known from L1
+4. If any entry is unsigned, forged, or from an unregistered key → shop refuses to counter-sign
+5. Shops can submit revocations before the fan-out closes, removing bad entries
+
+A single honest shop catches any forgery. The coalition has zero room to fabricate certificates because it cannot produce any shop's Jubjub signature.
+
+**Daily rhythm**:
+1. Morning — Hydra head opens, reificators submit topups throughout the day
+2. End of day — shops review the IPFS changeset, submit revocations if needed
+3. Close — head fans out to L1, shops counter-sign the new certificate root
+4. Next morning — new head opens with the committed state
+
+**Confirmation latency**: a topup is committed when the Hydra snapshot is signed (unanimous consensus, irrevocable). It becomes spendable on L1 after the next fan-out. The customer receives a Hydra snapshot confirmation as proof of inclusion.
+
 ### IV. Privacy by Default
 
 User balances and voucher caps are never revealed on-chain. All on-chain data is commitments (Poseidon hashes) or zero-knowledge proofs. Only the spend amount per transaction is public. The issuer who tops up a user's cap knows that cap (they signed it), but on-chain observers learn nothing about balances.
@@ -45,7 +79,9 @@ The two keys exist because two different verification environments (ZK circuit a
 
 The **issuer** (card that signed the cap certificate) and the **acceptor** (card that submits the settlement) are per-transaction role labels, not separate actor types. Both are cards belonging to coalition shops. Earn at shop A's card, spend at shop B's card. The circuit verifies the issuer's Jubjub signature on the cap. The validator verifies the customer's Ed25519 signature binding the acceptor and checks the acceptor card is registered.
 
-Circuit public inputs: `[d, commit_S_old, commit_S_new, user_id, issuer_Ax, issuer_Ay, pk_c_hi, pk_c_lo]`
+Circuit public inputs: `[d, commit_S_old, commit_S_new, user_id, issuer_Ax, issuer_Ay, pk_c_hi, pk_c_lo, certificate_id]`
+
+`certificate_id` = `Poseidon(user_id, cap)` — computed inside the circuit (the circuit already verifies the issuer's Jubjub signature over this value) and exposed as a public input for the L1 validator to cross-check against the certificate root MPF proof.
 
 `signed_data` layout (74 bytes): `txid (32) || ix (2) || acceptor_pk (32) || d (8)` — where `acceptor_pk` is the accepting card's Ed25519 public key.
 
@@ -70,11 +106,15 @@ Spending and redemption are decoupled in time and space.
 
 #### Card and Key Ceremony
 
-The card is a PIN-protected smart card with a secure element. The coalition manufactures cards and registers them on-chain.
+The card is a PIN-protected smart card with a secure element. Two separate authorities control the two keys:
 
-1. **Coalition manufactures the card** — burns two key pairs into the secure element: a Jubjub EdDSA key (for certificate signing) and an Ed25519 key (for Cardano transactions and customer authentication). The card's public keys are registered in the coalition datum under a shop.
-2. **Shop receives the card** — along with 2-3 spare cards (same shop, different keys). The shop inserts a card into the reificator to activate it. Spare cards are kept in a safe.
-3. **PIN protection** — the secure element locks signing operations behind a PIN. N failed attempts lock the card permanently. A locked card is replaced from the safe and revoked on-chain.
+1. **Shop generates its Jubjub key pair** — the shop creates its own EdDSA-Poseidon keypair and registers the public key on L1. The private key never leaves the shop's control. The coalition never sees it.
+2. **Coalition manufactures the card** — burns a unique Ed25519 key pair into the secure element (for Cardano transactions and customer authentication). The Ed25519 public key is registered in the coalition datum under the shop.
+3. **Shop loads the Jubjub key onto the card** — the shop burns its Jubjub private key into the card's secure element. All cards belonging to the same shop carry the same Jubjub key (required because certificates are per-shop, not per-card). The shop handles this distribution — the coalition is not involved.
+4. **Shop receives 2-3 cards per cashing point** — each with the same Jubjub key and a unique Ed25519 key. The shop inserts a card into the reificator to activate it. Spare cards are kept in a safe.
+5. **PIN protection** — the secure element locks signing operations behind a PIN. N failed attempts lock the card permanently. A locked card is replaced from the safe and revoked on-chain.
+
+**Separation of authority**: the coalition controls reificator identity (Ed25519 — it manufactured the card). The shop controls certificate signing (Jubjub — it generated and loaded the key). Neither can impersonate the other. The coalition cannot forge certificates because it never has the shop's Jubjub private key.
 
 The reificator has no keys and no secrets. It is interchangeable commodity hardware. A shop's card works in any compatible reificator. Device breaks? Plug the card into a new one. No re-registration needed.
 
@@ -100,13 +140,13 @@ The card (via reificator) can redeem but cannot revert. The shop can revert but 
 
 #### Flow
 
-1. **At home**: Customer chooses a spending shop and contacts its reificator. The reificator (with card inserted) authenticates via the card's Ed25519 key. Customer verifies the card is registered in the coalition datum. Customer generates a ZK proof binding the amount `d` and the issuer card's Jubjub key, then signs `signed_data` binding the accepting card's Ed25519 public key, a TxOutRef, and `d`.
-2. **Settlement**: Reificator submits the proof on-chain. The validator checks the Groth16 proof, verifies the customer's Ed25519 signature over `signed_data`, confirms `acceptor_pk` is a registered card, and confirms the transaction is signed by `acceptor_pk`. The spend counter updates and a pending entry is created in the pending trie (committed state).
+1. **At home**: Customer chooses a spending shop and contacts its reificator. The reificator (with card inserted) authenticates via the card's Ed25519 key. Customer verifies the card is registered in the coalition datum. Customer reads the certificate root (reference input on L1) and obtains a SHA-256 Merkle proof that their `certificate_id` is anchored. Customer generates a ZK proof binding the amount `d`, the issuer card's Jubjub key, and exposing `certificate_id` as a public input. Customer signs `signed_data` binding the accepting card's Ed25519 public key, a TxOutRef, and `d`.
+2. **Settlement**: Reificator submits the proof on L1. The validator checks: (a) the Groth16 proof is valid, (b) the customer's Ed25519 signature over `signed_data` is valid, (c) `acceptor_pk` is a registered card, (d) the transaction is signed by `acceptor_pk`, (e) the `certificate_id` from the proof's public inputs has a valid SHA-256 Merkle proof against the certificate root (reference input). The spend counter updates and a pending entry is created in the pending trie (committed state).
 3. **Certificate**: Card signs a reification certificate (Ed25519, with nonce) via the reificator, returned to the phone.
 4. **At the shop**: Customer reaches the cashing point. Reificator screen is dormant.
 5. **Reification**: Customer presents certificate. Reificator verifies the card's signature, queries data provider for Merkle membership proof of the nonce in the pending trie. If valid — switches to present state, displays the spent amount.
 6. **Redemption**: Casher acknowledges, applies the discount. Reificator submits redemption request (signed by card) — pending entry removed from trie (redeemed).
-7. **Topup**: Casher sets new reward amount. Card signs a fresh cap certificate (Jubjub EdDSA), sent to the phone via the reificator. **Requires the card to be inserted.**
+7. **Topup**: Casher sets new reward amount. Card signs a fresh cap certificate (Jubjub EdDSA). The reificator submits a topup transaction to the Hydra head, anchoring the `certificate_id = Poseidon(user_id, cap)` in the certificate MPF. The signed certificate is sent to the phone. **Requires the card to be inserted.**
 8. **Dormant**: Reificator screen goes dormant. Background settlement continues (only while card is inserted).
 
 #### Device Loss / Theft
@@ -130,20 +170,23 @@ The card (via reificator) can redeem but cannot revert. The shop can revert but 
 - **No acceptor misdirection**: The customer's Ed25519 signature binds `acceptor_pk` (the accepting card's Ed25519 public key) in `signed_data`. The on-chain validator enforces that the transaction is signed by `acceptor_pk` and that `acceptor_pk` is a registered card. A proof intended for card B cannot be submitted by card A.
 - **No certificate replay**: Reification certificates carry nonces. Each nonce maps to a pending trie entry on-chain, consumed on redemption.
 - **Card-bound**: Reification certificates are signed by the card's Ed25519 key and redeemable only at a reificator with that card inserted.
-- **No certificate forgery**: Cap certificates require the card's Jubjub EdDSA key (inside the secure element, behind a PIN). A stolen reificator without the card cannot produce certificates — it has no signing keys at all.
+- **No certificate forgery**: Cap certificates require the card's Jubjub EdDSA key (inside the secure element, behind a PIN). A stolen reificator without the card cannot produce certificates — it has no signing keys at all. Even with a stolen card, forged certificates must be anchored on the Hydra head (requires a registered Ed25519 key) and survive shop audit at fan-out.
+- **Anchoring revocation**: after key compromise, the shop revokes the card on L1. No new topup transactions can be submitted to the Hydra head with the revoked Ed25519 key. The damage window is limited to: time between compromise and revocation. Certificates anchored before revocation are cryptographically legitimate (signed by the shop's Jubjub key); the question of whether they were authorized is a business matter, not a protocol one.
 - **Recoverable**: Stolen or malfunctioning devices cannot prevent recovery. The shop revokes the card on-chain and reverts pending entries with the master key. Spare cards from the safe restore service immediately.
-- **Threat model**: The protocol protects against device failure (malfunction, theft, vandalism), not against malicious shops. The shop is assumed cooperative — it has every incentive to serve its customers. Theft of an active reificator with card inserted is mitigated by PIN protection and on-chain revocation.
+- **Threat model**: The protocol protects against device failure (malfunction, theft, vandalism) and coalition misbehavior (forgery, fabrication). It does not protect against malicious shops — the shop is assumed cooperative. Theft of an active reificator with card inserted is mitigated by PIN protection, on-chain revocation, and the daily fan-out audit window.
 
 #### State
 
 | Location | What it holds |
 |----------|--------------|
-| **On-chain — spend trie** | issuer_card → user → commit(spent) |
-| **On-chain — card trie** | shop → card_pk pair (jubjub_pk, ed25519_pk) |
-| **On-chain — pending trie** | card_ed25519_pk → nonce → {user_id, amount} |
-| **User's phone** | User secret, Ed25519 keypair (`sk_c`, `pk_c`), spend randomness, cap certificates (signed by card's Jubjub key), reification certificates (signed by card's Ed25519 key) |
-| **Card (secure element)** | Jubjub EdDSA keypair + Ed25519 keypair, PIN-protected |
-| **Reificator** | Cardano payment key + UTXO for fees. No identity keys — all signing delegated to the inserted card. Stateless commodity hardware. |
+| **L1 — spend trie** | issuer_card → user → commit(spent) |
+| **L1 — card trie** | shop → card_pk pair (jubjub_pk, ed25519_pk) |
+| **L1 — pending trie** | card_ed25519_pk → nonce → {user_id, amount} |
+| **L1 — certificate root** | SHA-256 MPF root hash (reference input, updated at daily fan-out) |
+| **L2 (Hydra) — certificate MPF** | (issuer_jubjub_pk, user_id) → certificate_id. Full MPF, updated per topup |
+| **User's phone** | User secret, Ed25519 keypair (`sk_c`, `pk_c`), spend randomness, cap certificates (signed by card's Jubjub key), reification certificates (signed by card's Ed25519 key), Hydra snapshot confirmations |
+| **Card (secure element)** | Jubjub EdDSA private key (per-shop, loaded by shop) + Ed25519 keypair (per-card, burned by coalition), PIN-protected |
+| **Reificator** | Cardano payment key + UTXO for fees. No identity keys — all signing delegated to the inserted card. Stateless commodity hardware. Connected to Hydra head for topup submission. |
 
 ### VIII. Economic Model
 
@@ -151,18 +194,22 @@ The costs flow downward from coalition to shop:
 
 | Actor | Responsibility | Cost |
 |-------|---------------|------|
-| **Coalition** | Publishes trie roots off-chain, manufactures cards | Minimal — root publication + card production |
-| **Data providers** | Serve Merkle proofs to reificators (untrusted, verifiable against on-chain root) | Paid per query by reificators |
-| **Reificators** | Query providers for proofs, build and submit transactions | Paid from the device's UTXO |
-| **Shops** | Fund their reificators' UTXOs with ADA | Cost of doing business (like card processing fees) |
+| **Coalition** | Runs Hydra head, publishes trie roots off-chain, manufactures cards (Ed25519 only) | Hydra infrastructure + root publication + card production |
+| **Data providers** | Serve Merkle proofs to reificators (untrusted, verifiable against on-chain root) — both spend trie and certificate tree | Paid per query by reificators |
+| **Reificators** | Query providers for proofs, build and submit L1 transactions (settlement/redeem/revert), submit topup transactions to Hydra head | Paid from the device's UTXO (L1 fees only — Hydra topups are near-zero cost) |
+| **Shops** | Fund their reificators' UTXOs with ADA, generate and distribute Jubjub keys to cards, counter-sign daily fan-outs | Cost of doing business (like card processing fees) |
 
-The shop refills the reificator's UTXO. Each card's Ed25519 public key derives a Cardano address visible in the coalition datum — the shop knows exactly which address to top up. The reificator spends from it for transaction fees and data provider queries. The busier the reificator, the more the shop pays. Data providers compete on price and availability — the market sets the cost.
+The shop refills the reificator's UTXO. Each card's Ed25519 public key derives a Cardano address visible in the coalition datum — the shop knows exactly which address to top up. The reificator spends from it for L1 transaction fees and data provider queries. Topup transactions go through the Hydra head at near-zero cost.
+
+Data providers serve two trees: the spend trie (L1) and the certificate tree (from Hydra fan-out). Both are SHA-256 MPF, same infrastructure, same trust model. Providers compete on price and availability.
 
 Fee deduction from loyalty points (converting points to ADA on-chain) is a future optimization, not a day-one requirement.
 
-### IX. On-Chain State: Three Tries (production) / Set-Valued UTxOs (prototype)
+### IX. On-Chain State: L1 + L2
 
-**Production form.** A single UTXO holds the current root hash of three Merkle Patricia Tries:
+**L1 production form.** Two UTxOs:
+
+1. **Trie root UTxO** (consumed by settlement/redeem/revert): holds the current root hash of three Merkle Patricia Tries:
 
 | Trie | Structure | Purpose |
 |------|-----------|---------|
@@ -170,25 +217,36 @@ Fee deduction from loyalty points (converting points to ADA on-chain) is a futur
 | **Card trie** | shop → (jubjub_pk, ed25519_pk) | Registered cards, managed by coalition. Each entry is a key pair under a shop identity |
 | **Pending trie** | card_ed25519_pk → nonce → {user_id, amount} | Committed-but-unredeemed spends |
 
+2. **Certificate root UTxO** (reference input only, never consumed by spends): holds the SHA-256 MPF root of the certificate tree, updated at daily Hydra fan-out. Counter-signed by shops. Zero contention with settlement transactions.
+
 The full trie data lives off-chain, published by the coalition. Untrusted data providers serve Merkle proofs verified against the on-chain root. The on-chain validator checks the Merkle proof in each transaction's redeemer and outputs a new root UTXO with the updated hash.
 
-**Prototype form (issue #9).** The prototype models the same semantics over explicit sets, without MPF/MPFS:
+**L2 (Hydra head).** The certificate MPF lives on the Hydra head:
+
+| Structure | Purpose |
+|-----------|---------|
+| (issuer_jubjub_pk, user_id) → certificate_id | Maps each (shop, customer) pair to the current `certificate_id = Poseidon(user_id, cap)`. Updated per topup transaction. |
+
+At daily fan-out, the head produces the certificate root UTxO on L1. The changeset is published to IPFS for shop audit.
+
+**L1 prototype form (issue #9).** The prototype models the same semantics over explicit sets, without MPF/MPFS:
 
 | Artefact | Structure | Replaces |
 |----------|-----------|----------|
 | **Coalition-metadata UTxO** (reference input) | `CoalitionDatum { issuer_pk, cards : Map shop_pk [(jubjub_pk, ed25519_pk)] }` | Card trie + coalition registry |
 | **Per-customer script UTxO** (one per customer) | `VoucherDatum { user_id, commit_spent, card_ed25519_pk }` | Spend trie (one entry per UTxO) + Pending trie (present = committed, absent = redeemed/reverted) |
+| **Certificate root UTxO** (reference input) | `CertRootDatum { mpf_root }` | Certificate MPF root from Hydra fan-out |
 
 Every security invariant of §V–§VII holds over the prototype form at N ∈ {1, 2, 3} with the same check structure (enforced in-validator rather than as a Merkle proof). The prototype form is wire-incompatible with the production form; migration from one to the other is tracked as a refinement obligation under issues #5 (MPF on-chain) and #8 (MPFS mediation). The prototype is correct and complete at small N; it is **not** operationally usable at scale — that is by design (Principle X).
 
-Every spend involves two on-chain transactions:
+Every spend involves two on-chain (L1) transactions:
 
-1. **Settlement tx**: updates the spend trie (counter goes up) and inserts into the pending trie. Submitted by the reificator (card signs the transaction via Ed25519), includes the Groth16 proof. The validator checks that `acceptor_pk` from `signed_data` is a registered card and that the transaction is signed by that card.
+1. **Settlement tx**: updates the spend trie (counter goes up) and inserts into the pending trie. Submitted by the reificator (card signs the transaction via Ed25519), includes the Groth16 proof. The validator checks that `acceptor_pk` from `signed_data` is a registered card, that the transaction is signed by that card, and that the `certificate_id` from the proof's public inputs has a valid membership proof in the certificate root (reference input).
 2. **Redemption tx**: removes the entry from the pending trie. Submitted by the reificator after physical redemption, signed by the card's Ed25519 key. No ZK proof needed.
 
 A revert is a single transaction: removes from the pending trie and rolls back the spend trie. Signed by the shop's master key.
 
-Topup is off-chain only — the card signs a new cap certificate (Jubjub EdDSA), no transaction. This is deliberate: topups are high-frequency, low-value (a few euros of rewards). Spends are low-frequency, high-value (30-50+ euros) — two transactions are economically negligible.
+Topup is a transaction on the Hydra head — the card signs a new cap certificate (Jubjub EdDSA) and the reificator submits a topup tx anchoring the `certificate_id` in the certificate MPF. Near-zero cost on the head. The certificate becomes spendable on L1 after the next daily fan-out.
 
 ### X. Correct Before Optimized
 
@@ -200,12 +258,27 @@ All dependencies, builds, and CI are Nix-managed. The flake produces all derivat
 
 ## Technology Stack
 
-- **On-chain**: Aiken (Plutus V3), BLS12-381 builtins for Groth16 pairing verification
-- **Circuits**: Circom 2 targeting BLS12-381, Poseidon commitments, EdDSA-Poseidon on Jubjub, Groth16 proof system
+- **L1 on-chain**: Aiken (Plutus V3), BLS12-381 builtins for Groth16 pairing verification, SHA-256 MPF for certificate root verification
+- **L2**: Hydra head for topup transactions (same Plutus validators, near-zero fees)
+- **Circuits**: Circom 2 targeting BLS12-381, Poseidon commitments (using `poseidon-bls12381-circom`), EdDSA-Poseidon on Jubjub, Groth16 proof system
 - **Off-chain**: Haskell (GHC 9.8.4), cardano-node-clients for transaction construction
 - **Point compression**: Rust FFI via blst crate
 - **Proof generation**: snarkjs (to be replaced by native Rust prover, see issue #2)
-- **State**: Merkle Patricia Trie (aiken-lang/merkle-patricia-forestry)
+- **State (L1)**: Merkle Patricia Trie (aiken-lang/merkle-patricia-forestry) — spend/card/pending tries + certificate root
+- **State (L2)**: Certificate MPF on Hydra head
+- **Publication**: IPFS for daily changeset publication (shop audit)
+
+### Open Research (blocks production deployment)
+
+The following questions must be answered before the Hydra-based architecture can be implemented:
+
+1. **Hydra snapshot finality** — verify that signed snapshots are irrevocable and can serve as customer topup receipts
+2. **Hydra fan-out mechanics** — how does the fan-out produce the certificate root UTxO on L1? Can shops counter-sign as part of the fan-out protocol?
+3. **Hydra participant model** — does the coalition run the head alone, or do shops participate? What are the scalability limits (number of participants)?
+4. **IPFS changeset format** — what exactly is published, and how do shops efficiently validate it?
+5. **Certificate root as reference input** — verify that CIP-31 reference inputs work across concurrent settlement transactions without contention
+
+If the Hydra-based topup model proves infeasible, the project cannot deliver near-zero-fee topups, which is a prerequisite for economic viability.
 
 ## Development Workflow
 
@@ -218,4 +291,4 @@ All dependencies, builds, and CI are Nix-managed. The flake produces all derivat
 
 This constitution supersedes all other practices. Privacy guarantees (Principle IV) and proof soundness (Principle V) cannot be weakened. The coalition model (Principle I) is the project's reason for existence.
 
-**Version**: 5.0.0 | **Ratified**: 2026-04-16 | **Last Amended**: 2026-04-21 (Card-based identity model — §V, §VII, §VIII, §IX)
+**Version**: 6.0.0 | **Ratified**: 2026-04-16 | **Last Amended**: 2026-04-22 (Two-layer architecture — §III-A Hydra+L1, certificate anchoring, shop-generated Jubjub keys, daily fan-out audit)
