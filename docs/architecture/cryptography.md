@@ -21,16 +21,21 @@ graph LR
 
 ### Circuit Public Inputs
 
-| Input | Type | Binds |
-|-------|------|-------|
-| `d` | integer | Spend amount (customer's choice) |
-| `commit_S_old` | field element | Old counter commitment |
-| `commit_S_new` | field element | New counter commitment |
-| `user_id` | field element | `Poseidon(user_secret)` |
-| `issuer_Ax`, `issuer_Ay` | field elements | Issuer card's Jubjub EdDSA public key (card that signed the cap certificate) |
-| `pk_c_hi`, `pk_c_lo` | field elements | Customer's Ed25519 public key, split across two field elements (pass-through; bound by proof so the validator can cross-check the redeemer-supplied `customer_pubkey`) |
+| Index | Input | Type | Binds |
+|-------|-------|------|-------|
+| 0 | `d` | integer | Spend amount (customer's choice) |
+| 1 | `commit_S_old` | field element | Old counter commitment |
+| 2 | `commit_S_new` | field element | New counter commitment |
+| 3 | `user_id` | field element | `Poseidon(user_secret)` |
+| 4–5 | `issuer_Ax`, `issuer_Ay` | field elements | Issuer card's Jubjub EdDSA public key (card that signed the cap certificate) |
+| 6–7 | `pk_c_hi`, `pk_c_lo` | field elements | Customer's Ed25519 public key, split across two field elements (pass-through; bound by proof so the validator can cross-check the redeemer-supplied `customer_pubkey`) |
+| 8 | `certificate_id` | field element | `Poseidon(user_id, cap)` — anchored in the certificate-store MPF |
+
+Total public inputs: 9.
 
 The acceptor card's Ed25519 public key is **not** a circuit public input. Its binding to the spend is achieved off-chain by the customer's Ed25519 signature over the redeemer's `signed_data`, verified on-chain via Plutus's `VerifyEd25519Signature` builtin. The validator additionally checks that `acceptor_pk` is a registered card in the coalition datum and that the transaction is signed by `acceptor_pk`.
+
+**`certificate_id` (index 8)**: The circuit already computes `Poseidon(user_id, cap)` internally (it verifies the issuer's Jubjub signature over this value). The change is: expose it as a public input instead of keeping it internal. The L1 settlement validator checks that this value has a valid SHA-256 MPF membership proof against the certificate root (reference input). This binds the ZK proof to a specific anchored certificate — without anchoring, the proof is rejected.
 
 ### Circuit Private Inputs
 
@@ -136,6 +141,27 @@ Per-transaction binding of the spending data to a specific Cardano tx is handled
 | Homomorphic | No — counter update proven inside circuit, not algebraically |
 
 Poseidon is chosen because it is **field-native**: pure arithmetic over the BLS12-381 scalar field. No curve operations, no bit decomposition. ~250 constraints per hash, compared to ~25,000 for SHA-256 in a circuit.
+
+## Certificate Tree: SHA-256 Merkle Patricia Forestry
+
+The certificate-store uses a SHA-256 MPF (Merkle Patricia Forestry), not Poseidon. This is a deliberate choice.
+
+### Why not Poseidon MPF?
+
+Poseidon is field-native and efficient *inside a ZK circuit* (~250 constraints per hash). But on-chain (Plutus), Poseidon requires implementing the full permutation in Plutus — no builtin exists. Benchmarking showed this blows the Plutus per-transaction CPU budget for MPF proof verification.
+
+### Why SHA-256 MPF?
+
+SHA-256 has a Plutus builtin (`sha2_256`). MPF membership proofs using SHA-256 are cheap to verify on-chain. The trade-off is that SHA-256 is expensive inside a ZK circuit (~25,000 constraints per hash vs ~250 for Poseidon). But the certificate MPF is never verified inside the circuit — it is verified by the L1 validator at settlement time.
+
+| Operation | Hash | Where | Cost |
+|-----------|------|-------|------|
+| Certificate MPF insert proof | SHA-256 | L2 (Hydra head, Plutus) | Cheap (builtin) |
+| Certificate MPF membership proof | SHA-256 | L1 (settlement validator, Plutus) | Cheap (builtin) |
+| `certificate_id = Poseidon(user_id, cap)` | Poseidon | ZK circuit | ~250 constraints |
+| Spend commitment `Poseidon(spent, r)` | Poseidon | ZK circuit | ~250 constraints |
+
+The two hash domains are cleanly separated: Poseidon for field-element commitments inside the circuit, SHA-256 for the Merkle tree verified on-chain.
 
 ## Trusted Setup
 

@@ -14,10 +14,13 @@ graph TD
         DOUBLE[Double Spend]
         TAMPER[Amount Tampering]
         MISDIR[Shop Misdirection]
+        KEYLEAK[Jubjub Key Leak]
+        FORGE[Unlimited Certificate Forgery]
     end
     subgraph "Not Protected Against"
         COLLUDE[Shop-Reificator Collusion]
         MALSHOP[Malicious Shop]
+        CENSOR[Coalition Censorship]
     end
 
     style THEFT fill:#354,stroke:#698
@@ -27,8 +30,11 @@ graph TD
     style DOUBLE fill:#354,stroke:#698
     style TAMPER fill:#354,stroke:#698
     style MISDIR fill:#354,stroke:#698
+    style KEYLEAK fill:#354,stroke:#698
+    style FORGE fill:#354,stroke:#698
     style COLLUDE fill:#543,stroke:#986
     style MALSHOP fill:#543,stroke:#986
+    style CENSOR fill:#543,stroke:#986
 ```
 
 ## Cryptographic Guarantees
@@ -146,6 +152,67 @@ sequenceDiagram
 
 On-chain state persists (spend counters), but without `user_secret` the user cannot generate new proofs. The spent points are unrecoverable.
 
+## Certificate Anchoring Security
+
+Certificate anchoring (Hydra-based) addresses a fundamental vulnerability of the unanchored protocol: what happens when a card's Jubjub key leaks.
+
+### Jubjub key leak (without anchoring)
+
+**Attack**: An attacker obtains a card's Jubjub private key (through physical extraction, side-channel attack, or insider compromise). They produce unlimited cap certificates for arbitrary users with arbitrary caps. Every forged certificate is indistinguishable from a legitimate one and spendable across the entire coalition.
+
+**Without anchoring**: No defense. The forged certificates are valid EdDSA signatures over valid messages. Revoking the key on L1 prevents future *settlements* from cards registered under that key, but forged certificates already distributed to users remain spendable. The attacker is a money printer.
+
+**With anchoring**: The damage window is bounded. Every topup must be recorded in the certificate-store MPF inside the Hydra head. At settlement time, the L1 validator checks that `certificate_id` has a valid membership proof against the certificate root. An unanchored certificate — no matter how cryptographically valid — fails this check and cannot be spent.
+
+```mermaid
+sequenceDiagram
+    participant ATK as Attacker (leaked Jubjub key)
+    participant P as Victim Phone
+    participant R as Reificator
+    participant L1 as L1
+
+    ATK->>P: forged cap certificate (valid Jubjub signature)
+    P->>P: generate ZK proof (valid — signature checks out)
+    P->>R: ZK proof + signed_data
+    R->>L1: settlement tx
+    L1->>L1: certificate_id MPF membership check → NOT FOUND
+    L1->>L1: REJECT
+```
+
+### Revocation under anchoring
+
+**Attack**: Card compromised, attacker has the Jubjub key and is using the card's reificator to anchor forged certificates.
+
+**Defense**:
+
+1. Shop revokes the card on L1 (removes from coalition datum)
+2. Coalition closes the Hydra head (coalition datum inside the head is now stale)
+3. Fan-out + promote the current certificate root
+4. Open new head with updated coalition datum
+5. The certificate-store validator rejects topups from the revoked card (Ed25519 key no longer registered)
+6. Certificates anchored before revocation remain valid and spendable — they were legitimately signed
+
+**Damage window** = time between key compromise and on-chain revocation. This is the fundamental improvement: without anchoring, the damage is unbounded; with anchoring, it is bounded by the revocation latency.
+
+### Coalition censorship
+
+**Attack**: The coalition refuses to include a shop's topups in the Hydra head, effectively blocking that shop's customers from anchoring certificates.
+
+**Analysis**: The coalition *can* censor — it is the sole Hydra participant and controls which transactions enter the head. However:
+
+- The coalition cannot *forge* certificates (it lacks any shop's Jubjub key)
+- The coalition cannot *profit* from censorship (it doesn't gain spendable certificates)
+- Censorship is detectable: the shop's reificators see `NewTx` submissions rejected or never confirmed
+- The shop can escalate: refuse to participate in the coalition, publicize the censorship
+
+**Mitigation**: This is a governance/trust issue, not a cryptographic one. The coalition's incentive is to serve all shops (it collects fees or membership dues). Censoring shops would destroy the coalition's value proposition. If censorship becomes a concern, the protocol can be extended with a forced-inclusion mechanism (e.g., L1 fallback topup at higher cost).
+
+### Hydra snapshot finality
+
+**Property**: Once a Hydra snapshot is confirmed (all participants have multi-signed it), it is irrevocable. No participant can present an earlier snapshot during contestation — only a *newer* one. This means topup anchoring, once confirmed, cannot be rolled back.
+
+**Implication**: The reificator's `SnapshotConfirmed` event is a strong guarantee. If the coalition closes the head, the latest confirmed snapshot is the one that fans out. There is no scenario where a confirmed topup disappears.
+
 ## Privacy Properties
 
 ```mermaid
@@ -177,7 +244,9 @@ graph LR
 
 | Observer | Learns | Does not learn |
 |----------|--------|---------------|
-| On-chain observer | `d`, `user_id`, `issuer_jubjub_pk`, `acceptor_ed25519_pk` (via signed_data), `commit(spent)`, `pk_c` | Cap only; `S_old`/`S_new` are derivable by aggregating public `d` values |
+| On-chain observer | `d`, `user_id`, `issuer_jubjub_pk`, `acceptor_ed25519_pk` (via signed_data), `commit(spent)`, `pk_c`, `certificate_id` | Cap; `S_old`/`S_new` are derivable by aggregating public `d` values |
 | Issuer (card that signed the cap) | Cap they signed, user_id | Other cards' caps, total spent, when/where redeemed |
 | Acceptor (card whose reificator processes the spend) | Amount `d` being redeemed | Cap, total spent, which card issued the certificate |
-| Data provider | Trie structure, entry existence | Nothing beyond what's on-chain |
+| Data provider | Trie structure, entry existence, certificate MPF structure | Nothing beyond what's on-chain |
+| Hydra head observer (coalition) | All topup entries: `(issuerJubjubPk, userId, certificateId, cardEd25519Pk)` | Cap values (certificate_id is `Poseidon(user_id, cap)` — cap is hidden) |
+| IPFS changeset reader | Same as Hydra head observer (changeset is public) | Cap values |

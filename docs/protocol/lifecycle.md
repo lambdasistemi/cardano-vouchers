@@ -50,14 +50,24 @@ sequenceDiagram
     participant C as Casher
     participant R as Reificator + Card
     participant P as Phone
+    participant H as Hydra Head
 
     C->>R: "give this customer 5 euros of rewards"
-    R->>R: card signs (Jubjub EdDSA): Poseidon(user_id, cap=5)
+    R->>R: card signs cap certificate (Jubjub EdDSA): Poseidon(user_id, cap=5)
     R->>P: cap certificate
-    Note over P: stores certificate<br/>No transaction. No on-chain state.
+    Note over R: Build topup tx (same Cardano tx format)
+    R->>R: card signs topup tx (Ed25519)
+    R->>H: submit topup tx via WebSocket
+    H->>H: certificate-store validator checks:<br/>1. MPF insert proof valid<br/>2. card Ed25519 key registered<br/>3. issuer Jubjub key matches card's shop
+    H->>H: snapshot confirmed (irrevocable)
+    H->>R: SnapshotConfirmed
+    R->>P: snapshot confirmation
+    Note over P: stores certificate + snapshot confirmation
 ```
 
-The relationship between user and shop is a signed certificate on a phone. Nothing else. The card must be inserted for topup — the reificator alone cannot produce certificates.
+The topup has two parts: (1) the cap certificate (Jubjub-signed, given to the user's phone) and (2) the certificate anchoring (Hydra transaction inserting `certificate_id` into the certificate-store MPF). Both happen atomically from the casher's perspective. The card must be inserted — the reificator alone cannot produce certificates or sign transactions.
+
+If the Hydra node is unreachable, the cap certificate is still issued (the card signs it locally) but the anchoring is queued for retry. The certificate is not spendable until anchored and fanned out to L1.
 
 ## Phase 5: First Spend (Settlement)
 
@@ -81,7 +91,7 @@ sequenceDiagram
     DP->>R: non-membership proof (first spend)
     R->>M: settlement request (card B signs tx via Ed25519)
     M->>L1: settlement tx
-    Note over L1: validator checks:<br/>1. Ed25519.verify(pk_c, signed_data, sig)<br/>2. signed_data.TxOutRef ∈ tx.inputs<br/>3. signed_data.d == redeemer.d<br/>4. customer_pubkey matches proof's pk_c inputs<br/>5. ZK proof valid<br/>6. non-membership → s_old=0 accepted<br/>7. signed_data.acceptor_pk is a registered card<br/>8. tx is signed by acceptor_pk
+    Note over L1: validator checks:<br/>1. Ed25519.verify(pk_c, signed_data, sig)<br/>2. signed_data.TxOutRef ∈ tx.inputs<br/>3. signed_data.d == redeemer.d<br/>4. customer_pubkey matches proof's pk_c inputs<br/>5. ZK proof valid (includes certificate_id at index 8)<br/>6. non-membership → s_old=0 accepted<br/>7. signed_data.acceptor_pk is a registered card<br/>8. tx is signed by acceptor_pk<br/>9. certificate_id has valid MPF membership proof<br/>   against certificate root (reference input)
     L1->>L1: spend trie: insert (issuer_A_jubjub, user_id) → commit(3)
     L1->>L1: pending trie: insert (card_B_ed25519_pk, nonce) → {user_id, 3}
     R->>P: reification certificate (nonce, d=3, card_B_ed25519_sig)
@@ -151,14 +161,20 @@ sequenceDiagram
     participant C as Casher
     participant R as Reificator + Card B
     participant P as Phone
+    participant H as Hydra Head
 
     C->>R: "give 8 euros of rewards"
-    R->>R: card B signs (Jubjub EdDSA): Poseidon(user_id, cap=8)
+    R->>R: card B signs cap certificate (Jubjub EdDSA): Poseidon(user_id, cap=8)
     R->>P: new cap certificate from card B
-    Note over P: now holds:<br/>• cap=5 from card A (fully spent)<br/>• cap=8 from card B (0 spent)<br/>• 1 reification certificate from card C
+    R->>R: card B signs topup tx (Ed25519)
+    R->>H: submit topup tx via WebSocket
+    H->>H: certificate-store validator: MPF insert
+    H->>R: SnapshotConfirmed
+    R->>P: snapshot confirmation
+    Note over P: now holds:<br/>• cap=5 from card A (fully spent)<br/>• cap=8 from card B (0 spent, anchored on L2)<br/>• 1 reification certificate from card C
 ```
 
-No transaction. The customer walks away with new earning potential at shop B.
+The customer walks away with new earning potential at shop B. The cap certificate is spendable once the current Hydra epoch fans out and the certificate root is promoted on L1.
 
 ## Phase 9: Multi-Certificate Spend (Future)
 
@@ -174,3 +190,113 @@ graph LR
 ```
 
 One proof, multiple certificates, atomic update. The circuit verifies N issuer signatures and proves each partial spend stays within its cap.
+
+## Hydra Daily Cycle
+
+The certificate anchoring layer runs on a daily cycle operated by the coalition. This cycle is orthogonal to the user-facing phases above — it runs continuously in the background.
+
+### Epoch Open
+
+```mermaid
+sequenceDiagram
+    participant CO as Coalition
+    participant L1 as L1
+    participant H as Hydra Head
+
+    CO->>L1: read coalition datum (registered shops, cards)
+    CO->>L1: read certificate-store UTxO (or create empty one)
+    CO->>H: init head (coalition as sole participant)
+    CO->>H: commit certificate-store UTxO
+    CO->>H: commit coalition datum snapshot (reference input)
+    Note over H: Head open — accepting topup transactions
+```
+
+If this is the first cycle ever, the coalition creates the certificate-store UTxO on L1 with an empty MPF root, then commits it.
+
+### Topups Throughout the Day
+
+Reificators submit topup transactions to the head via WebSocket (see Phase 4 and Phase 8). Each topup consumes and reproduces the certificate-store UTxO with an updated MPF root. The head processes these sequentially — one per snapshot.
+
+### Changeset Publication
+
+```mermaid
+sequenceDiagram
+    participant CO as Coalition
+    participant IPFS as IPFS
+
+    CO->>CO: collect all topup entries from this epoch
+    CO->>IPFS: publish changeset JSON
+    Note over IPFS: {headId, epoch, previousRoot,<br/>newRoot, entries: [{issuerJubjubPk,<br/>userId, certificateId, cardEd25519Pk,<br/>snapshotNumber}, ...]}
+```
+
+Each entry is independently verifiable against L1: the keys must be registered, and replaying all inserts from `previousRoot` must produce `newRoot`.
+
+### Shop Audit
+
+```mermaid
+sequenceDiagram
+    participant S as Shop
+    participant IPFS as IPFS
+    participant L1 as L1
+
+    S->>IPFS: fetch changeset (CID from coalition)
+    S->>L1: verify all keys are registered
+    S->>S: replay inserts: previousRoot → newRoot
+    S->>S: cross-check entries for own shop against reificator logs
+    alt Everything valid
+        S->>S: approve (ready to counter-sign promotion)
+    else Discrepancy found
+        S->>S: refuse to counter-sign
+    end
+```
+
+### Close, Contestation, Fan-out
+
+```mermaid
+sequenceDiagram
+    participant CO as Coalition
+    participant H as Hydra Head
+    participant L1 as L1
+
+    CO->>H: close head
+    H->>L1: post latest confirmed snapshot
+    Note over L1: contestation period (12h)
+    Note over L1: anyone can contest with a newer snapshot
+    CO->>L1: fan-out
+    Note over L1: certificate-store UTxO materializes on L1<br/>at the script address
+```
+
+The contestation period is 12 hours minimum (Cardano mainnet safe zone ≈ 10h, rounded up). After contestation, fan-out distributes the head's final UTxO set to L1.
+
+### Certificate Root Promotion
+
+```mermaid
+sequenceDiagram
+    participant CO as Coalition
+    participant L1 as L1
+
+    CO->>L1: promotion tx
+    Note over L1: Input: provisional certificate-store UTxO (from fan-out)<br/>Output: certificate-root UTxO (reference input)<br/>Previous root remains active until promotion completes
+```
+
+The promotion transaction makes the fanned-out certificate root the active one for settlements. The previous certificate root remains active until promotion completes — no gap in service.
+
+**Day-one**: the coalition is the sole promoter (no on-chain shop counter-signing). Shops audit off-chain and raise disputes out-of-band. On-chain K-of-N shop counter-signing is a future hardening step.
+
+### Revocation During an Epoch
+
+```mermaid
+sequenceDiagram
+    participant S as Shop
+    participant L1 as L1
+    participant CO as Coalition
+    participant H as Hydra Head
+
+    S->>L1: remove compromised card from coalition datum
+    CO->>H: close head (coalition datum is stale)
+    CO->>L1: fan-out + promote current root
+    CO->>H: open new head with updated coalition datum
+    Note over H: revoked card's Ed25519 key no longer registered<br/>new topups from revoked card rejected
+```
+
+When a card's Jubjub key is compromised, the shop revokes it on L1. The head must be closed and reopened with the updated coalition datum — the simplest approach for a rare event. Certificates anchored before revocation remain valid (they were legitimately signed). The damage window equals the time between compromise and revocation.
